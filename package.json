@@ -1,0 +1,31 @@
+{
+  "name": "aberturaprocessos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sistema de abertura e acompanhamento de processos de comércio exterior",
+  "scripts": {
+    "prepare": "husky",
+    "lint": "npm run lint --prefix backend && npm run lint --prefix frontend",
+    "typecheck": "npm run typecheck --prefix backend && npm run typecheck --prefix frontend",
+    "test": "npm test --prefix backend"
+  },
+  "lint-staged": {
+    "backend/**/*.ts": [
+      "eslint --fix --config backend/eslint.config.js",
+      "prettier --write --config backend/.prettierrc.json"
+    ],
+    "frontend/**/*.{ts,tsx}": [
+      "eslint --fix --config frontend/eslint.config.js",
+      "prettier --write --config frontend/.prettierrc.json"
+    ]
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
+    "prettier": "^3.9.6"
+  }
+}
