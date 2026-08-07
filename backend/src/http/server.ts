@@ -4,7 +4,7 @@ import { logger } from '@/infra/logger';
 import { prisma } from '@/infra/prisma/client';
 import { closeSharedRedisClient } from '@/infra/queue/connection';
 
-const app = createApp();
+const app = createApp(prisma);
 
 const server = app.listen(env.PORT, '127.0.0.1', () => {
   logger.info(`API escutando em http://127.0.0.1:${env.PORT}${env.API_PREFIX}`);

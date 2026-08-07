@@ -6,7 +6,7 @@ import { prisma } from '@/infra/prisma/client';
 import { closeSharedRedisClient } from '@/infra/queue/connection';
 
 describe('Rotas de saúde', () => {
-  const app = createApp();
+  const app = createApp(prisma);
 
   afterAll(async () => {
     await closeSharedRedisClient();

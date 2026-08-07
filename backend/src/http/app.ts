@@ -1,24 +1,30 @@
+import type { PrismaClient } from '@prisma/client';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express, { type Express, Router } from 'express';
 import helmet from 'helmet';
 
 import { env } from '@/config/env';
+import { buildContainer } from '@/container';
 import { errorHandler, notFoundHandler } from '@/http/middlewares/error-handler';
 import { requestContext } from '@/http/middlewares/request-context';
+import { buildAuthRouter } from '@/http/routes/auth-routes';
 import { healthRouter } from '@/http/routes/health.routes';
 
 /**
- * Monta o app Express. Nesta etapa (Tarefa 3 do plano) existem apenas as
- * rotas de saúde; autenticação e rotas de domínio chegam nas tarefas
- * seguintes (docs/12-plano-de-tarefas.md).
+ * Monta o app Express. `prisma` é recebido por parâmetro (não importado
+ * direto de infra/prisma/client) para que os testes de integração possam
+ * injetar o cliente já conectado — mantém a montagem do app pura.
  */
-export function createApp(): Express {
+export function createApp(prisma: PrismaClient): Express {
   const app = express();
+  const container = buildContainer(prisma);
 
   app.set('trust proxy', 1);
   app.use(helmet());
-  app.use(cors({ credentials: true }));
+  // credentials: true exige lista explícita de origens — nunca '*' com
+  // cookies (docs/06, seção "Outras proteções HTTP").
+  app.use(cors({ origin: env.CORS_ORIGINS, credentials: true }));
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
   app.use(requestContext());
@@ -27,8 +33,10 @@ export function createApp(): Express {
   // o prefixo da API (para o proxy do IIS, que roteia /api/* para a app —
   // ver docs/11-deploy-windows-server.md).
   app.use(healthRouter);
+
   const apiRouter = Router();
   apiRouter.use(healthRouter);
+  apiRouter.use('/auth', buildAuthRouter(container.authController, container.authenticateDeps));
   app.use(env.API_PREFIX, apiRouter);
 
   app.use(notFoundHandler);

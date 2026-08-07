@@ -5,6 +5,7 @@ module.exports = {
   rootDir: '.',
   roots: ['<rootDir>/tests'],
   testMatch: ['**/*.test.ts'],
+  setupFiles: ['<rootDir>/tests/setup-env.ts'],
   clearMocks: true,
   coverageDirectory: 'coverage',
   moduleNameMapper: {

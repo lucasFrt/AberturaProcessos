@@ -37,7 +37,17 @@ module.exports = tseslint.config(
       'no-console': 'off',
     },
   },
-  // Barreira arquitetural: services e domain não conhecem Prisma nem Express (doc 09 / doc 03)
+  // Fakes em memória implementam interfaces assíncronas (contrato do
+  // repositório real) mas não precisam de fato aguardar nada.
+  {
+    files: ['**/tests/helpers/fakes/**/*.ts'],
+    rules: {
+      '@typescript-eslint/require-await': 'off',
+    },
+  },
+  // Barreira arquitetural: services e domain não conhecem Prisma nem Express (doc 09 / doc 03).
+  // infra/security é permitido: hospeda a interface (PasswordHasher, TokenService) junto da
+  // implementação (docs/03), e services recebem essas interfaces por injeção de construtor.
   {
     files: ['src/services/**/*.ts', 'src/domain/**/*.ts'],
     rules: {
@@ -51,7 +61,13 @@ module.exports = tseslint.config(
             },
             { name: 'express', message: 'Services não conhecem HTTP.' },
           ],
-          patterns: ['**/infra/*'],
+          patterns: [
+            '@/infra/prisma/*',
+            '@/infra/queue/*',
+            '@/infra/mail/*',
+            '@/infra/storage/*',
+            '@/infra/realtime/*',
+          ],
         },
       ],
     },
