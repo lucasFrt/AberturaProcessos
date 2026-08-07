@@ -1,0 +1,282 @@
+// Ver docs/04-modelo-de-dados.md para o racional completo de cada decisão
+// (ausência de enum, colunas UNIQUE não anuláveis, onDelete/onUpdate explícitos).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlserver"
+  url      = env("DATABASE_URL")
+}
+
+/// Grupo econômico. Fronteira de isolamento de dados.
+model Organization {
+  id         String   @id @default(cuid()) @db.NVarChar(30)
+  name       String   @db.NVarChar(200)
+  /// true = a própria trading (usuários OPERATIONAL/ADMIN)
+  isInternal Boolean  @default(false)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  emailDomains EmailDomain[]
+  companies    Company[]
+  users        User[]
+
+  @@index([name])
+  @@map("organizations")
+}
+
+/// Domínio de e-mail que provisiona automaticamente usuários para a Organization.
+model EmailDomain {
+  id             String   @id @default(cuid()) @db.NVarChar(30)
+  /// minúsculo, sem "@". ex.: "opusce.com.br"
+  domain         String   @unique @db.NVarChar(255)
+  organizationId String   @db.NVarChar(30)
+  /// Role atribuída no provisionamento automático: CLIENT | OPERATIONAL | ADMIN
+  defaultRole    String   @default("CLIENT") @db.NVarChar(20)
+  /// true = usuário entra ACTIVE; false = entra PENDING mesmo com domínio reconhecido
+  autoApprove    Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([organizationId])
+  @@map("email_domains")
+}
+
+/// CNPJ (matriz ou filial).
+model Company {
+  id             String   @id @default(cuid()) @db.NVarChar(30)
+  /// somente dígitos, 14 posições
+  cnpj           String   @unique @db.NVarChar(14)
+  legalName      String   @db.NVarChar(255)
+  tradeName      String?  @db.NVarChar(255)
+  organizationId String   @db.NVarChar(30)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization       Organization  @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  userAccesses       UserCompany[]
+  clientProcesses    Process[]     @relation("ProcessClientCompany")
+  requestedProcesses Process[]     @relation("ProcessRequestingCompany")
+
+  @@index([organizationId])
+  @@index([legalName])
+  @@map("companies")
+}
+
+model User {
+  id             String    @id @default(cuid()) @db.NVarChar(30)
+  name           String    @db.NVarChar(200)
+  email          String    @unique @db.NVarChar(255)
+  /// null quando a conta existe apenas via provedor social
+  passwordHash   String?   @db.NVarChar(255)
+  /// CLIENT | OPERATIONAL | ADMIN
+  role           String    @default("CLIENT") @db.NVarChar(20)
+  /// PENDING | ACTIVE | DISABLED | REJECTED
+  status         String    @default("PENDING") @db.NVarChar(20)
+  /// ORGANIZATION = todos os CNPJs da org | COMPANIES = apenas os de UserCompany
+  accessScope    String    @default("ORGANIZATION") @db.NVarChar(20)
+  organizationId String?   @db.NVarChar(30)
+  avatarUrl      String?   @db.NVarChar(1000)
+  lastLoginAt    DateTime?
+  approvedAt     DateTime?
+  approvedById   String?   @db.NVarChar(30)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  identities    UserIdentity[]
+  companyAccess UserCompany[]
+  refreshTokens RefreshToken[]
+
+  createdProcesses     Process[]        @relation("ProcessCreatedBy")
+  responsibleProcesses Process[]        @relation("ProcessResponsible")
+  deletedProcesses     Process[]        @relation("ProcessDeletedBy")
+  historyEntries       ProcessHistory[] @relation("HistoryActor")
+  uploadedDocuments    Document[]       @relation("DocumentUploadedBy")
+  deletedDocuments     Document[]       @relation("DocumentDeletedBy")
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([role])
+  @@map("users")
+}
+
+/// Vínculo do usuário com um provedor de autenticação.
+/// Existe para evitar coluna UNIQUE anulável (limitação do SQL Server).
+model UserIdentity {
+  id             String   @id @default(cuid()) @db.NVarChar(30)
+  userId         String   @db.NVarChar(30)
+  /// LOCAL | GOOGLE | MICROSOFT
+  provider       String   @db.NVarChar(20)
+  /// "sub" do provedor; para LOCAL usa-se o próprio e-mail
+  providerUserId String   @db.NVarChar(255)
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@map("user_identities")
+}
+
+/// Acesso explícito a um CNPJ. Só relevante quando accessScope = COMPANIES.
+model UserCompany {
+  id        String   @id @default(cuid()) @db.NVarChar(30)
+  userId    String   @db.NVarChar(30)
+  companyId String   @db.NVarChar(30)
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  company Company @relation(fields: [companyId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([userId, companyId])
+  @@index([companyId])
+  @@map("user_companies")
+}
+
+/// Refresh token persistido por hash, para permitir revogação.
+model RefreshToken {
+  id        String    @id @default(cuid()) @db.NVarChar(30)
+  userId    String    @db.NVarChar(30)
+  /// SHA-256 do token; o valor puro nunca é gravado
+  tokenHash String    @unique @db.NVarChar(64)
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?   @db.NVarChar(500)
+  ipAddress String?   @db.NVarChar(64)
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+/// Etapa do funil. Global, ordenável, gerenciada por ADMIN.
+model KanbanStage {
+  id        String   @id @default(cuid()) @db.NVarChar(30)
+  name      String   @unique @db.NVarChar(100)
+  /// hex, ex.: "#1677ff"
+  color     String   @default("#1677ff") @db.NVarChar(9)
+  order     Int
+  /// true = etapa terminal; ao entrar, grava completedAt
+  isFinal   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  processes   Process[]        @relation("ProcessCurrentStage")
+  historyFrom ProcessHistory[] @relation("HistoryFromStage")
+  historyTo   ProcessHistory[] @relation("HistoryToStage")
+
+  @@index([order])
+  @@map("kanban_stages")
+}
+
+/// Controle do código sequencial legível por ano (PRC-2026-00001).
+model ProcessSequence {
+  year       Int @id
+  lastNumber Int @default(0)
+
+  @@map("process_sequences")
+}
+
+model Process {
+  id                  String    @id @default(cuid()) @db.NVarChar(30)
+  /// PRC-{ano}-{5 dígitos}
+  code                String    @unique @db.NVarChar(20)
+  /// Referência informada no formulário
+  reference           String    @db.NVarChar(255)
+  /// Campo livre longo
+  additionalInfo      String?   @db.NVarChar(Max)
+  /// CNPJ para quem o processo é aberto
+  clientCompanyId     String    @db.NVarChar(30)
+  /// CNPJ que solicitou (modelo trading). null = igual ao clientCompanyId
+  requestingCompanyId String?   @db.NVarChar(30)
+  currentStageId      String    @db.NVarChar(30)
+  responsibleId       String?   @db.NVarChar(30)
+  createdById         String    @db.NVarChar(30)
+  /// Quando entrou na etapa atual. Base do cálculo de tempo por etapa.
+  stageChangedAt      DateTime  @default(now())
+  completedAt         DateTime?
+  deletedAt           DateTime?
+  deletedById         String?   @db.NVarChar(30)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  clientCompany     Company     @relation("ProcessClientCompany", fields: [clientCompanyId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  requestingCompany Company?    @relation("ProcessRequestingCompany", fields: [requestingCompanyId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  currentStage      KanbanStage @relation("ProcessCurrentStage", fields: [currentStageId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  responsible       User?       @relation("ProcessResponsible", fields: [responsibleId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdBy         User        @relation("ProcessCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  deletedBy         User?       @relation("ProcessDeletedBy", fields: [deletedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  history   ProcessHistory[]
+  documents Document[]
+
+  @@index([currentStageId])
+  @@index([clientCompanyId])
+  @@index([requestingCompanyId])
+  @@index([responsibleId])
+  @@index([deletedAt])
+  @@index([createdAt])
+  @@map("processes")
+}
+
+/// Trilha de auditoria append-only.
+model ProcessHistory {
+  id          String   @id @default(cuid()) @db.NVarChar(30)
+  processId   String   @db.NVarChar(30)
+  /// PROCESS_CREATED | PROCESS_UPDATED | STAGE_CHANGED | RESPONSIBLE_CHANGED
+  /// | DOCUMENT_ADDED | DOCUMENT_REMOVED | PROCESS_DELETED
+  action      String   @db.NVarChar(30)
+  fromStageId String?  @db.NVarChar(30)
+  toStageId   String?  @db.NVarChar(30)
+  actorId     String   @db.NVarChar(30)
+  /// Frase pronta para exibição na timeline
+  description String?  @db.NVarChar(1000)
+  /// JSON serializado com o diff / detalhes
+  metadata    String?  @db.NVarChar(Max)
+  createdAt   DateTime @default(now())
+
+  process   Process      @relation(fields: [processId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  fromStage KanbanStage? @relation("HistoryFromStage", fields: [fromStageId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  toStage   KanbanStage? @relation("HistoryToStage", fields: [toStageId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  actor     User         @relation("HistoryActor", fields: [actorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([processId, createdAt])
+  @@index([action])
+  @@map("process_history")
+}
+
+model Document {
+  id           String    @id @default(cuid()) @db.NVarChar(30)
+  processId    String    @db.NVarChar(30)
+  /// Nome enviado pelo usuário. Nunca usado como caminho físico.
+  originalName String    @db.NVarChar(500)
+  /// UUID + extensão. Nome real em disco.
+  storedName   String    @db.NVarChar(255)
+  /// Caminho relativo a STORAGE_ROOT, ex.: "2026/08/<processId>/<storedName>"
+  relativePath String    @db.NVarChar(1000)
+  mimeType     String    @db.NVarChar(255)
+  /// bytes
+  size         Int
+  sha256       String    @db.NVarChar(64)
+  uploadedById String    @db.NVarChar(30)
+  deletedAt    DateTime?
+  deletedById  String?   @db.NVarChar(30)
+  createdAt    DateTime  @default(now())
+
+  process    Process @relation(fields: [processId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  uploadedBy User    @relation("DocumentUploadedBy", fields: [uploadedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  deletedBy  User?   @relation("DocumentDeletedBy", fields: [deletedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([processId, deletedAt])
+  @@map("documents")
+}

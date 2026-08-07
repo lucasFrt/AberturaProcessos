@@ -30,6 +30,13 @@ module.exports = tseslint.config(
       ],
     },
   },
+  // Scripts de CLI (seed) podem usar console diretamente.
+  {
+    files: ['**/prisma/**/*.ts'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
   // Barreira arquitetural: services e domain não conhecem Prisma nem Express (doc 09 / doc 03)
   {
     files: ['src/services/**/*.ts', 'src/domain/**/*.ts'],

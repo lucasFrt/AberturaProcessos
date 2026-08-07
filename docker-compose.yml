@@ -1,0 +1,49 @@
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: ap-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Dev@Str0ngPass!"
+      MSSQL_PID: Developer
+    ports:
+      # Host 1434 -> Container 1433: a porta 1433 já está em uso por uma
+      # instância nativa do SQL Server nesta máquina.
+      - "1434:1433"
+    volumes:
+      - ap-sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: ap-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      # Host 6380 -> Container 6379: a porta 6379 já está em uso por um
+      # container Redis de outro projeto nesta máquina.
+      - "6380:6379"
+    volumes:
+      - ap-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: ap-mailpit
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # interface web
+    environment:
+      MP_MAX_MESSAGES: 500
+
+volumes:
+  ap-sqlserver-data:
+  ap-redis-data:
