@@ -28,6 +28,10 @@ AberturaProcessos/
 | [10-ambiente-e-configuracao.md](./10-ambiente-e-configuracao.md) | Variáveis de ambiente, docker-compose, setup local |
 | [11-deploy-windows-server.md](./11-deploy-windows-server.md) | Windows Server 2022 + IIS + NSSM + SQL Server |
 | [12-plano-de-tarefas.md](./12-plano-de-tarefas.md) | 22 tarefas incrementais, cada uma com critério de aceite |
+| [prompts/](./prompts/) | Prompts prontos para delegar cada tarefa a uma IA, com contexto e referências já resolvidas |
+
+Ver também [`CLAUDE.md`](../CLAUDE.md) na raiz do repositório: contexto operacional para agentes de
+IA (regras de arquitetura, convenções, decisões técnicas já tomadas, estado atual do projeto).
 
 ## Como usar esta documentação
 
