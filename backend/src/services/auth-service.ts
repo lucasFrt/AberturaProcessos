@@ -11,12 +11,12 @@ import type { UserIdentityRepository } from '@/domain/repositories/user-identity
 import type { UserRepository } from '@/domain/repositories/user-repository';
 import { logger } from '@/infra/logger';
 import type { PasswordHasher } from '@/infra/security/password-hasher';
-import { generateRefreshToken, hashRefreshToken } from '@/infra/security/refresh-token-generator';
+import { hashRefreshToken } from '@/infra/security/refresh-token-generator';
 import type { TokenService } from '@/infra/security/token-service';
 import { AccessScopeResolver } from '@/services/access-scope-resolver';
 import { DomainProvisioningService } from '@/services/domain-provisioning-service';
-
-const REFRESH_TOKEN_TTL_DAYS_DEFAULT = 7;
+import { TokenIssuer } from '@/services/token-issuer';
+import type { IssuedTokens } from '@/services/token-issuer';
 
 export interface RegisterInput {
   name: string;
@@ -39,12 +39,6 @@ export interface RefreshInput {
   ipAddress: string | null;
 }
 
-export interface IssuedTokens {
-  accessToken: string;
-  refreshToken: string;
-  expiresInSeconds: number;
-}
-
 export type RegisterResult =
   { status: 'ACTIVE'; user: User; tokens: IssuedTokens } | { status: 'PENDING' };
 
@@ -54,16 +48,6 @@ export interface MeResult {
   companies: Company[];
   scope: AccessScope;
   permissions: readonly string[];
-}
-
-function parseAccessTokenTtlSeconds(ttl: string): number {
-  const match = /^(\d+)([smhd])$/.exec(ttl.trim());
-  if (!match) return 15 * 60;
-
-  const value = Number(match[1]);
-  const unit = match[2];
-  const multiplier = { s: 1, m: 60, h: 3600, d: 86400 }[unit as 's' | 'm' | 'h' | 'd'];
-  return value * multiplier;
 }
 
 export interface AuthServiceDeps {
@@ -86,7 +70,16 @@ export interface AuthServiceDeps {
  * DomainProvisioningService e a emissão de tokens daqui.
  */
 export class AuthService {
-  constructor(private readonly deps: AuthServiceDeps) {}
+  private readonly tokenIssuer: TokenIssuer;
+
+  constructor(private readonly deps: AuthServiceDeps) {
+    this.tokenIssuer = new TokenIssuer({
+      tokenService: deps.tokenService,
+      refreshTokenRepository: deps.refreshTokenRepository,
+      accessTokenTtl: deps.accessTokenTtl,
+      refreshTokenTtlDays: deps.refreshTokenTtlDays,
+    });
+  }
 
   async register(input: RegisterInput): Promise<RegisterResult> {
     const email = input.email.trim().toLowerCase();
@@ -120,7 +113,7 @@ export class AuthService {
       return { status: 'PENDING' };
     }
 
-    const tokens = await this.issueTokens(user, input);
+    const tokens = await this.tokenIssuer.issue(user, input);
     return { status: 'ACTIVE', user, tokens };
   }
 
@@ -146,7 +139,7 @@ export class AuthService {
 
     await this.deps.userRepository.update(user.id, { lastLoginAt: new Date() });
 
-    const tokens = await this.issueTokens(user, input);
+    const tokens = await this.tokenIssuer.issue(user, input);
     return { user, tokens };
   }
 
@@ -179,7 +172,7 @@ export class AuthService {
     }
 
     await this.deps.refreshTokenRepository.markRevoked(stored.id);
-    const tokens = await this.issueTokens(user, input);
+    const tokens = await this.tokenIssuer.issue(user, input);
     return { user, tokens };
   }
 
@@ -212,39 +205,6 @@ export class AuthService {
       companies,
       scope,
       permissions: getPermissionsForRole(user.role),
-    };
-  }
-
-  private async issueTokens(
-    user: User,
-    context: { userAgent: string | null; ipAddress: string | null },
-  ): Promise<IssuedTokens> {
-    // "scope" no payload é a configuração do usuário (ORGANIZATION | COMPANIES),
-    // não o AccessScope resolvido (ALL | COMPANIES) — o token não carrega a
-    // lista de CNPJs, que é sempre resolvida por requisição (docs/06).
-    const accessToken = this.deps.tokenService.signAccessToken({
-      sub: user.id,
-      role: user.role,
-      organizationId: user.organizationId,
-      scope: user.accessScope,
-    });
-
-    const refreshToken = generateRefreshToken();
-    const ttlDays = this.deps.refreshTokenTtlDays || REFRESH_TOKEN_TTL_DAYS_DEFAULT;
-    const expiresAt = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
-
-    await this.deps.refreshTokenRepository.create({
-      userId: user.id,
-      tokenHash: hashRefreshToken(refreshToken),
-      expiresAt,
-      userAgent: context.userAgent,
-      ipAddress: context.ipAddress,
-    });
-
-    return {
-      accessToken,
-      refreshToken,
-      expiresInSeconds: parseAccessTokenTtlSeconds(this.deps.accessTokenTtl),
     };
   }
 }

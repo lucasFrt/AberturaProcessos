@@ -12,6 +12,7 @@ import { defaultRateLimiters } from '@/http/middlewares/rate-limit';
 import { requestContext } from '@/http/middlewares/request-context';
 import { buildAuthRouter } from '@/http/routes/auth-routes';
 import { healthRouter } from '@/http/routes/health.routes';
+import { passport } from '@/passport';
 
 /**
  * Monta o app Express. `prisma` é recebido por parâmetro (não importado
@@ -44,11 +45,21 @@ export function createApp(
   // ver docs/11-deploy-windows-server.md).
   app.use(healthRouter);
 
+  // Sem sessão (JWT stateless, docs/06) — só inicializa o Passport para
+  // popular `req.user` durante o handshake OAuth.
+  app.use(passport.initialize());
+
   const apiRouter = Router();
   apiRouter.use(healthRouter);
   apiRouter.use(
     '/auth',
-    buildAuthRouter(container.authController, container.authenticateDeps, rateLimiters),
+    buildAuthRouter(
+      container.authController,
+      container.authenticateDeps,
+      rateLimiters,
+      container.socialAuthController,
+      container.configuredProviders,
+    ),
   );
   app.use(env.API_PREFIX, apiRouter);
 

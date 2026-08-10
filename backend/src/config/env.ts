@@ -47,6 +47,24 @@ export const envSchema = z.object({
         .filter(Boolean),
     ),
 
+  // ── Login social (docs/06, seção "Login social") ─────────────
+  // URL pública do front (redirect final do callback) e da própria API
+  // (base dos redirect URIs configurados no provedor). Com default local
+  // para não quebrar ambientes que ainda não usam login social.
+  FRONTEND_URL: z.string().url().default('http://localhost:5173'),
+  API_BASE_URL: z.string().url().default('http://localhost:3000'),
+
+  // Credenciais opcionais: a ausência de um provedor apenas desativa aquele
+  // provedor (rota responde 404, /auth/providers informa false) — nunca
+  // impede a subida da API (docs/06, critério de aceite da Tarefa 5).
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_CALLBACK_URL: z.string().url().optional(),
+  MICROSOFT_CLIENT_ID: z.string().optional(),
+  MICROSOFT_CLIENT_SECRET: z.string().optional(),
+  MICROSOFT_TENANT_ID: z.string().min(1).default('common'),
+  MICROSOFT_CALLBACK_URL: z.string().url().optional(),
+
   // ── Rate limiting (docs/06, seção "Rate limiting") ───────────
   // Configuráveis para permitir testes de integração com janelas/limites
   // baixos (Tarefa 6, critério de aceite) sem tocar no código do limitador.
