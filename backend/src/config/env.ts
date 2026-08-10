@@ -82,6 +82,14 @@ export const envSchema = z.object({
   RATE_LIMIT_UPLOAD_WINDOW_MINUTES: z.coerce.number().int().positive().default(10),
   RATE_LIMIT_ANONYMOUS_MAX: z.coerce.number().int().positive().default(60),
   RATE_LIMIT_ANONYMOUS_WINDOW_MINUTES: z.coerce.number().int().positive().default(1),
+
+  // ── Armazenamento de anexos (docs/10, RF-40 a RF-44, RNF-11) ──
+  // Resolvido para caminho absoluto e criado se não existir por
+  // `LocalDiskStorage` (docs/10: "criado se não existir; se não for
+  // gravável, aborta").
+  STORAGE_ROOT: z.string().min(1).default('./storage/uploads'),
+  MAX_UPLOAD_SIZE_MB: z.coerce.number().int().positive().default(100),
+  MAX_FILES_PER_REQUEST: z.coerce.number().int().positive().default(10),
 });
 
 const refinedEnvSchema = envSchema.superRefine((data, ctx) => {

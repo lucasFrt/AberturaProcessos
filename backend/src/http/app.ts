@@ -12,6 +12,7 @@ import { defaultRateLimiters } from '@/http/middlewares/rate-limit';
 import { requestContext } from '@/http/middlewares/request-context';
 import { buildAuthRouter } from '@/http/routes/auth-routes';
 import { buildCompanyRouter } from '@/http/routes/company-routes';
+import { buildDocumentRouter } from '@/http/routes/document-routes';
 import { healthRouter } from '@/http/routes/health.routes';
 import { buildKanbanStageRouter } from '@/http/routes/kanban-stage-routes';
 import { buildOrganizationRouter } from '@/http/routes/organization-routes';
@@ -96,7 +97,17 @@ export function createApp(
   );
   apiRouter.use(
     '/processes',
-    buildProcessRouter(container.processController, container.authenticateDeps, rateLimiters),
+    buildProcessRouter(
+      container.processController,
+      container.authenticateDeps,
+      rateLimiters,
+      container.documentController,
+      container.uploadMiddlewareConfig,
+    ),
+  );
+  apiRouter.use(
+    '/documents',
+    buildDocumentRouter(container.documentController, container.authenticateDeps, rateLimiters),
   );
   app.use(env.API_PREFIX, apiRouter);
 

@@ -3,13 +3,16 @@ import type { PrismaClient } from '@prisma/client';
 import { env } from '@/config/env';
 import { AuthController } from '@/http/controllers/auth-controller';
 import { CompanyController } from '@/http/controllers/company-controller';
+import { DocumentController } from '@/http/controllers/document-controller';
 import { KanbanStageController } from '@/http/controllers/kanban-stage-controller';
 import { OrganizationController } from '@/http/controllers/organization-controller';
 import { ProcessController } from '@/http/controllers/process-controller';
 import { SocialAuthController } from '@/http/controllers/social-auth-controller';
 import { UserManagementController } from '@/http/controllers/user-management-controller';
 import type { AuthenticateDeps } from '@/http/middlewares/authenticate';
+import type { UploadMiddlewareConfig } from '@/http/middlewares/upload';
 import { PrismaCompanyRepository } from '@/infra/prisma/repositories/prisma-company-repository';
+import { PrismaDocumentRepository } from '@/infra/prisma/repositories/prisma-document-repository';
 import { PrismaEmailDomainRepository } from '@/infra/prisma/repositories/prisma-email-domain-repository';
 import { PrismaKanbanStageRepository } from '@/infra/prisma/repositories/prisma-kanban-stage-repository';
 import { PrismaOrganizationRepository } from '@/infra/prisma/repositories/prisma-organization-repository';
@@ -19,11 +22,13 @@ import { PrismaUserIdentityRepository } from '@/infra/prisma/repositories/prisma
 import { PrismaUserRepository } from '@/infra/prisma/repositories/prisma-user-repository';
 import { BcryptPasswordHasher } from '@/infra/security/password-hasher';
 import { JwtTokenService } from '@/infra/security/token-service';
+import { LocalDiskStorage } from '@/infra/storage/local-disk-storage';
 import { configurePassport, passport } from '@/passport';
 import type { ConfiguredProviders } from '@/passport';
 import { AccessScopeResolver } from '@/services/access-scope-resolver';
 import { AuthService } from '@/services/auth-service';
 import { CompanyService } from '@/services/company-service';
+import { DocumentService } from '@/services/document-service';
 import { DomainProvisioningService } from '@/services/domain-provisioning-service';
 import { KanbanStageService } from '@/services/kanban-stage-service';
 import { OrganizationService } from '@/services/organization-service';
@@ -49,6 +54,8 @@ export interface Container {
   userManagementController: UserManagementController;
   kanbanStageController: KanbanStageController;
   processController: ProcessController;
+  documentController: DocumentController;
+  uploadMiddlewareConfig: UploadMiddlewareConfig;
 }
 
 export function buildContainer(prisma: PrismaClient): Container {
@@ -60,6 +67,7 @@ export function buildContainer(prisma: PrismaClient): Container {
   const emailDomainRepository = new PrismaEmailDomainRepository(prisma);
   const kanbanStageRepository = new PrismaKanbanStageRepository(prisma);
   const processRepository = new PrismaProcessRepository(prisma);
+  const documentRepository = new PrismaDocumentRepository(prisma);
 
   const passwordHasher = new BcryptPasswordHasher();
   const tokenService = new JwtTokenService();
@@ -126,6 +134,14 @@ export function buildContainer(prisma: PrismaClient): Container {
     userRepository,
   });
 
+  const storageProvider = new LocalDiskStorage(env.STORAGE_ROOT);
+  const documentService = new DocumentService({
+    documentRepository,
+    processRepository,
+    storageProvider,
+    maxFilesPerRequest: env.MAX_FILES_PER_REQUEST,
+  });
+
   return {
     prisma,
     authController: new AuthController(authService, organizationRepository),
@@ -137,5 +153,10 @@ export function buildContainer(prisma: PrismaClient): Container {
     userManagementController: new UserManagementController(userManagementService),
     kanbanStageController: new KanbanStageController(kanbanStageService),
     processController: new ProcessController(processService),
+    documentController: new DocumentController(documentService),
+    uploadMiddlewareConfig: {
+      maxFileSizeMb: env.MAX_UPLOAD_SIZE_MB,
+      maxFilesPerRequest: env.MAX_FILES_PER_REQUEST,
+    },
   };
 }

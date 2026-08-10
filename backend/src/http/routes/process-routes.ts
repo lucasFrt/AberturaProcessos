@@ -1,11 +1,15 @@
 import { Router } from 'express';
 
+import type { DocumentController } from '@/http/controllers/document-controller';
 import type { ProcessController } from '@/http/controllers/process-controller';
-import type { AuthenticateDeps } from '@/http/middlewares/authenticate';
 import { authenticate } from '@/http/middlewares/authenticate';
+import type { AuthenticateDeps } from '@/http/middlewares/authenticate';
 import { authorize } from '@/http/middlewares/authorize';
 import type { RateLimiters } from '@/http/middlewares/rate-limit';
+import type { UploadMiddlewareConfig } from '@/http/middlewares/upload';
+import { buildUploadMiddleware } from '@/http/middlewares/upload';
 import { validate } from '@/http/middlewares/validate';
+import { documentProcessIdParamsSchema } from '@/http/schemas/document-schemas';
 import {
   assignResponsibleSchema,
   createProcessSchema,
@@ -28,8 +32,11 @@ export function buildProcessRouter(
   controller: ProcessController,
   authenticateDeps: AuthenticateDeps,
   rateLimiters: RateLimiters,
+  documentController: DocumentController,
+  uploadMiddlewareConfig: UploadMiddlewareConfig,
 ): Router {
   const router = Router();
+  const uploadMiddleware = buildUploadMiddleware(uploadMiddlewareConfig);
 
   router.use(authenticate(authenticateDeps), rateLimiters.rateLimitByRole);
 
@@ -82,6 +89,25 @@ export function buildProcessRouter(
     '/:id/history',
     validate({ params: processIdParamsSchema, query: processHistoryQuerySchema }),
     controller.history,
+  );
+
+  // Documentos (RF-40 a RF-44; docs/05 seção "Documentos"). Upload passa
+  // pelo limitador de upload dedicado (RNF-02); leitura usa o mesmo
+  // `rateLimitByRole` das demais rotas de processo (já aplicado em
+  // `router.use` no topo deste router).
+  router.post(
+    '/:id/documents',
+    authorize('CLIENT', 'OPERATIONAL', 'ADMIN'),
+    rateLimiters.uploadLimiter,
+    validate({ params: documentProcessIdParamsSchema }),
+    uploadMiddleware,
+    documentController.upload,
+  );
+
+  router.get(
+    '/:id/documents',
+    validate({ params: documentProcessIdParamsSchema }),
+    documentController.listByProcess,
   );
 
   return router;
