@@ -3,12 +3,14 @@ import type { PrismaClient } from '@prisma/client';
 import { env } from '@/config/env';
 import { AuthController } from '@/http/controllers/auth-controller';
 import { CompanyController } from '@/http/controllers/company-controller';
+import { KanbanStageController } from '@/http/controllers/kanban-stage-controller';
 import { OrganizationController } from '@/http/controllers/organization-controller';
 import { SocialAuthController } from '@/http/controllers/social-auth-controller';
 import { UserManagementController } from '@/http/controllers/user-management-controller';
 import type { AuthenticateDeps } from '@/http/middlewares/authenticate';
 import { PrismaCompanyRepository } from '@/infra/prisma/repositories/prisma-company-repository';
 import { PrismaEmailDomainRepository } from '@/infra/prisma/repositories/prisma-email-domain-repository';
+import { PrismaKanbanStageRepository } from '@/infra/prisma/repositories/prisma-kanban-stage-repository';
 import { PrismaOrganizationRepository } from '@/infra/prisma/repositories/prisma-organization-repository';
 import { PrismaRefreshTokenRepository } from '@/infra/prisma/repositories/prisma-refresh-token-repository';
 import { PrismaUserIdentityRepository } from '@/infra/prisma/repositories/prisma-user-identity-repository';
@@ -21,6 +23,7 @@ import { AccessScopeResolver } from '@/services/access-scope-resolver';
 import { AuthService } from '@/services/auth-service';
 import { CompanyService } from '@/services/company-service';
 import { DomainProvisioningService } from '@/services/domain-provisioning-service';
+import { KanbanStageService } from '@/services/kanban-stage-service';
 import { OrganizationService } from '@/services/organization-service';
 import { SocialAuthService } from '@/services/social-auth-service';
 import { TokenIssuer } from '@/services/token-issuer';
@@ -41,6 +44,7 @@ export interface Container {
   organizationController: OrganizationController;
   companyController: CompanyController;
   userManagementController: UserManagementController;
+  kanbanStageController: KanbanStageController;
 }
 
 export function buildContainer(prisma: PrismaClient): Container {
@@ -50,6 +54,7 @@ export function buildContainer(prisma: PrismaClient): Container {
   const organizationRepository = new PrismaOrganizationRepository(prisma);
   const companyRepository = new PrismaCompanyRepository(prisma);
   const emailDomainRepository = new PrismaEmailDomainRepository(prisma);
+  const kanbanStageRepository = new PrismaKanbanStageRepository(prisma);
 
   const passwordHasher = new BcryptPasswordHasher();
   const tokenService = new JwtTokenService();
@@ -107,6 +112,8 @@ export function buildContainer(prisma: PrismaClient): Container {
     refreshTokenRepository,
   });
 
+  const kanbanStageService = new KanbanStageService({ stageRepository: kanbanStageRepository });
+
   return {
     prisma,
     authController: new AuthController(authService, organizationRepository),
@@ -116,5 +123,6 @@ export function buildContainer(prisma: PrismaClient): Container {
     organizationController: new OrganizationController(organizationService),
     companyController: new CompanyController(companyService),
     userManagementController: new UserManagementController(userManagementService),
+    kanbanStageController: new KanbanStageController(kanbanStageService),
   };
 }

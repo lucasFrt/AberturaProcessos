@@ -13,6 +13,7 @@ import { requestContext } from '@/http/middlewares/request-context';
 import { buildAuthRouter } from '@/http/routes/auth-routes';
 import { buildCompanyRouter } from '@/http/routes/company-routes';
 import { healthRouter } from '@/http/routes/health.routes';
+import { buildKanbanStageRouter } from '@/http/routes/kanban-stage-routes';
 import { buildOrganizationRouter } from '@/http/routes/organization-routes';
 import { buildUserManagementRouter } from '@/http/routes/user-management-routes';
 import { passport } from '@/passport';
@@ -80,6 +81,14 @@ export function createApp(
     '/users',
     buildUserManagementRouter(
       container.userManagementController,
+      container.authenticateDeps,
+      rateLimiters,
+    ),
+  );
+  apiRouter.use(
+    '/stages',
+    buildKanbanStageRouter(
+      container.kanbanStageController,
       container.authenticateDeps,
       rateLimiters,
     ),
