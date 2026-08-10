@@ -7,6 +7,8 @@ import helmet from 'helmet';
 import { env } from '@/config/env';
 import { buildContainer } from '@/container';
 import { errorHandler, notFoundHandler } from '@/http/middlewares/error-handler';
+import type { RateLimiters } from '@/http/middlewares/rate-limit';
+import { defaultRateLimiters } from '@/http/middlewares/rate-limit';
 import { requestContext } from '@/http/middlewares/request-context';
 import { buildAuthRouter } from '@/http/routes/auth-routes';
 import { healthRouter } from '@/http/routes/health.routes';
@@ -15,8 +17,16 @@ import { healthRouter } from '@/http/routes/health.routes';
  * Monta o app Express. `prisma` é recebido por parâmetro (não importado
  * direto de infra/prisma/client) para que os testes de integração possam
  * injetar o cliente já conectado — mantém a montagem do app pura.
+ *
+ * `rateLimiters` é opcional e usa os singletons de produção (config vinda
+ * do env) por padrão; testes de integração injetam um conjunto próprio com
+ * limites baixos (docs/06, Tarefa 6, critério de aceite) via
+ * `buildRateLimiters`, sem precisar mutar `process.env`.
  */
-export function createApp(prisma: PrismaClient): Express {
+export function createApp(
+  prisma: PrismaClient,
+  rateLimiters: RateLimiters = defaultRateLimiters,
+): Express {
   const app = express();
   const container = buildContainer(prisma);
 
@@ -36,7 +46,10 @@ export function createApp(prisma: PrismaClient): Express {
 
   const apiRouter = Router();
   apiRouter.use(healthRouter);
-  apiRouter.use('/auth', buildAuthRouter(container.authController, container.authenticateDeps));
+  apiRouter.use(
+    '/auth',
+    buildAuthRouter(container.authController, container.authenticateDeps, rateLimiters),
+  );
   app.use(env.API_PREFIX, apiRouter);
 
   app.use(notFoundHandler);

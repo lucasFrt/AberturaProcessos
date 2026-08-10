@@ -46,6 +46,24 @@ export const envSchema = z.object({
         .map((origin) => origin.trim())
         .filter(Boolean),
     ),
+
+  // ── Rate limiting (docs/06, seção "Rate limiting") ───────────
+  // Configuráveis para permitir testes de integração com janelas/limites
+  // baixos (Tarefa 6, critério de aceite) sem tocar no código do limitador.
+  RATE_LIMIT_AUTH_MAX: z.coerce.number().int().positive().default(10),
+  RATE_LIMIT_AUTH_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
+  RATE_LIMIT_REFRESH_MAX: z.coerce.number().int().positive().default(60),
+  RATE_LIMIT_REFRESH_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
+  RATE_LIMIT_OAUTH_CALLBACK_MAX: z.coerce.number().int().positive().default(30),
+  RATE_LIMIT_OAUTH_CALLBACK_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
+  RATE_LIMIT_CLIENT_MAX: z.coerce.number().int().positive().default(120),
+  RATE_LIMIT_CLIENT_WINDOW_MINUTES: z.coerce.number().int().positive().default(1),
+  RATE_LIMIT_INTERNAL_MAX: z.coerce.number().int().positive().default(1000),
+  RATE_LIMIT_INTERNAL_WINDOW_MINUTES: z.coerce.number().int().positive().default(1),
+  RATE_LIMIT_UPLOAD_MAX: z.coerce.number().int().positive().default(30),
+  RATE_LIMIT_UPLOAD_WINDOW_MINUTES: z.coerce.number().int().positive().default(10),
+  RATE_LIMIT_ANONYMOUS_MAX: z.coerce.number().int().positive().default(60),
+  RATE_LIMIT_ANONYMOUS_WINDOW_MINUTES: z.coerce.number().int().positive().default(1),
 });
 
 const refinedEnvSchema = envSchema.superRefine((data, ctx) => {

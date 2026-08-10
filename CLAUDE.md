@@ -119,6 +119,7 @@ verificar as versões reais) assumiam. Onde isso importou, a decisão já foi to
 
 ## Estado do projeto
 
-Tarefas 1-4 do plano concluídas (scaffolding, infra local + schema Prisma, esqueleto MVC, auth local
-+ JWT). Ver `git log --oneline` para o histórico exato de commits e `docs/12-plano-de-tarefas.md`
-para o que falta. Repositório remoto: `https://github.com/lucasFrt/AberturaProcessos` (privado).
+Tarefas 1-6 do plano concluídas (scaffolding, infra local + schema Prisma, esqueleto MVC, auth local
++ JWT, login social/provisionamento por domínio, rate limiting). Ver `git log --oneline` para o
+histórico exato de commits e `docs/12-plano-de-tarefas.md` para o que falta. Repositório remoto:
+`https://github.com/lucasFrt/AberturaProcessos` (privado).
