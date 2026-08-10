@@ -15,6 +15,7 @@ import { buildCompanyRouter } from '@/http/routes/company-routes';
 import { healthRouter } from '@/http/routes/health.routes';
 import { buildKanbanStageRouter } from '@/http/routes/kanban-stage-routes';
 import { buildOrganizationRouter } from '@/http/routes/organization-routes';
+import { buildProcessRouter } from '@/http/routes/process-routes';
 import { buildUserManagementRouter } from '@/http/routes/user-management-routes';
 import { passport } from '@/passport';
 
@@ -92,6 +93,10 @@ export function createApp(
       container.authenticateDeps,
       rateLimiters,
     ),
+  );
+  apiRouter.use(
+    '/processes',
+    buildProcessRouter(container.processController, container.authenticateDeps, rateLimiters),
   );
   app.use(env.API_PREFIX, apiRouter);
 
