@@ -2,7 +2,10 @@ import type { PrismaClient } from '@prisma/client';
 
 import { env } from '@/config/env';
 import { AuthController } from '@/http/controllers/auth-controller';
+import { CompanyController } from '@/http/controllers/company-controller';
+import { OrganizationController } from '@/http/controllers/organization-controller';
 import { SocialAuthController } from '@/http/controllers/social-auth-controller';
+import { UserManagementController } from '@/http/controllers/user-management-controller';
 import type { AuthenticateDeps } from '@/http/middlewares/authenticate';
 import { PrismaCompanyRepository } from '@/infra/prisma/repositories/prisma-company-repository';
 import { PrismaEmailDomainRepository } from '@/infra/prisma/repositories/prisma-email-domain-repository';
@@ -16,9 +19,12 @@ import { configurePassport, passport } from '@/passport';
 import type { ConfiguredProviders } from '@/passport';
 import { AccessScopeResolver } from '@/services/access-scope-resolver';
 import { AuthService } from '@/services/auth-service';
+import { CompanyService } from '@/services/company-service';
 import { DomainProvisioningService } from '@/services/domain-provisioning-service';
+import { OrganizationService } from '@/services/organization-service';
 import { SocialAuthService } from '@/services/social-auth-service';
 import { TokenIssuer } from '@/services/token-issuer';
+import { UserManagementService } from '@/services/user-management-service';
 
 /**
  * Ponto único de composição manual de dependências (docs/03-arquitetura.md,
@@ -32,6 +38,9 @@ export interface Container {
   authenticateDeps: AuthenticateDeps;
   socialAuthController: SocialAuthController;
   configuredProviders: ConfiguredProviders;
+  organizationController: OrganizationController;
+  companyController: CompanyController;
+  userManagementController: UserManagementController;
 }
 
 export function buildContainer(prisma: PrismaClient): Container {
@@ -82,11 +91,30 @@ export function buildContainer(prisma: PrismaClient): Container {
 
   const authenticateDeps: AuthenticateDeps = { tokenService, userRepository, accessScopeResolver };
 
+  const organizationService = new OrganizationService({
+    organizationRepository,
+    emailDomainRepository,
+    companyRepository,
+  });
+
+  const companyService = new CompanyService({ companyRepository, organizationRepository });
+
+  const userManagementService = new UserManagementService({
+    userRepository,
+    userIdentityRepository,
+    organizationRepository,
+    companyRepository,
+    refreshTokenRepository,
+  });
+
   return {
     prisma,
     authController: new AuthController(authService, organizationRepository),
     authenticateDeps,
     socialAuthController: new SocialAuthController(passport, configuredProviders),
     configuredProviders,
+    organizationController: new OrganizationController(organizationService),
+    companyController: new CompanyController(companyService),
+    userManagementController: new UserManagementController(userManagementService),
   };
 }

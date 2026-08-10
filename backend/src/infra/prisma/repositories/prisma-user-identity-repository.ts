@@ -31,4 +31,9 @@ export class PrismaUserIdentityRepository implements UserIdentityRepository {
     const record = await this.prisma.userIdentity.create({ data });
     return toDomain(record);
   }
+
+  async listByUserId(userId: string): Promise<UserIdentity[]> {
+    const records = await this.prisma.userIdentity.findMany({ where: { userId } });
+    return records.map(toDomain);
+  }
 }

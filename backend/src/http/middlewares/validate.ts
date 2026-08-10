@@ -31,7 +31,15 @@ export function validate(schemas: ValidateSchemas): RequestHandler {
         next(new ValidationError('Parâmetros de consulta inválidos.', result.error.issues));
         return;
       }
-      req.query = result.data as typeof req.query;
+      // Express 5 define `req.query` como getter sem setter (baseado em
+      // `req.url`) — atribuição direta (`req.query = ...`) lança
+      // "Cannot set property query". `defineProperty` sobrescreve o
+      // acessor por uma propriedade de dados própria da instância.
+      Object.defineProperty(req, 'query', {
+        value: result.data,
+        writable: true,
+        configurable: true,
+      });
     }
 
     if (schemas.params) {

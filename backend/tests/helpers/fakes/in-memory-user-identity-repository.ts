@@ -24,4 +24,8 @@ export class InMemoryUserIdentityRepository implements UserIdentityRepository {
     this.items.push(identity);
     return identity;
   }
+
+  async listByUserId(userId: string): Promise<UserIdentity[]> {
+    return this.items.filter((item) => item.userId === userId);
+  }
 }

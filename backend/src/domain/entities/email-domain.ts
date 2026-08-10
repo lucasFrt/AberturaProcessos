@@ -8,3 +8,10 @@ export interface EmailDomain {
   autoApprove: boolean;
   createdAt: Date;
 }
+
+export interface CreateEmailDomainData {
+  domain: string;
+  organizationId: string;
+  defaultRole: Role;
+  autoApprove: boolean;
+}

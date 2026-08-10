@@ -1,10 +1,20 @@
-import type { Company } from '@/domain/entities/company';
+import type {
+  Company,
+  CompanyFilters,
+  CreateCompanyData,
+  UpdateCompanyData,
+} from '@/domain/entities/company';
+import type { Page, PaginationParams } from '@/domain/pagination';
 
-/**
- * Interface mínima usada pela Tarefa 4 (resposta de /auth/me). O CRUD
- * completo de empresas chega na Tarefa 7 — este arquivo será estendido lá,
- * não substituído.
- */
 export interface CompanyRepository {
   findManyByIds(ids: string[]): Promise<Company[]>;
+  findById(id: string): Promise<Company | null>;
+  /** `cnpj` já deve chegar normalizado (somente dígitos). */
+  findByCnpj(cnpj: string): Promise<Company | null>;
+  list(filters: CompanyFilters, pagination: PaginationParams): Promise<Page<Company>>;
+  create(data: CreateCompanyData): Promise<Company>;
+  update(id: string, data: UpdateCompanyData): Promise<Company>;
+  delete(id: string): Promise<void>;
+  /** Processos em que a empresa é cliente ou solicitante — bloqueia exclusão (docs/04). */
+  countLinkedProcesses(id: string): Promise<number>;
 }

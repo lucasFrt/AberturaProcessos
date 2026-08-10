@@ -11,7 +11,10 @@ import type { RateLimiters } from '@/http/middlewares/rate-limit';
 import { defaultRateLimiters } from '@/http/middlewares/rate-limit';
 import { requestContext } from '@/http/middlewares/request-context';
 import { buildAuthRouter } from '@/http/routes/auth-routes';
+import { buildCompanyRouter } from '@/http/routes/company-routes';
 import { healthRouter } from '@/http/routes/health.routes';
+import { buildOrganizationRouter } from '@/http/routes/organization-routes';
+import { buildUserManagementRouter } from '@/http/routes/user-management-routes';
 import { passport } from '@/passport';
 
 /**
@@ -59,6 +62,26 @@ export function createApp(
       rateLimiters,
       container.socialAuthController,
       container.configuredProviders,
+    ),
+  );
+  apiRouter.use(
+    '/organizations',
+    buildOrganizationRouter(
+      container.organizationController,
+      container.authenticateDeps,
+      rateLimiters,
+    ),
+  );
+  apiRouter.use(
+    '/companies',
+    buildCompanyRouter(container.companyController, container.authenticateDeps, rateLimiters),
+  );
+  apiRouter.use(
+    '/users',
+    buildUserManagementRouter(
+      container.userManagementController,
+      container.authenticateDeps,
+      rateLimiters,
     ),
   );
   app.use(env.API_PREFIX, apiRouter);
