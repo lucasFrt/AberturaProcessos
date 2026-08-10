@@ -137,6 +137,30 @@ export interface UpdateProcessWithHistoryInput {
   diff: ProcessUpdateDiffEntry[];
 }
 
+/** Move de etapa (docs/05, `PATCH /processes/:id/stage`; RF-25, RF-27). */
+export interface MoveStageWithHistoryInput {
+  fromStageId: string;
+  toStageId: string;
+  /** Decidido pelo service (que já buscou a etapa destino) — o repositório só persiste. */
+  toStageIsFinal: boolean;
+  actorId: string;
+  note?: string | null | undefined;
+  description: string;
+}
+
+/** Atribuição de responsável (docs/05, `PATCH /processes/:id/responsible`; RF-26). */
+export interface AssignResponsibleWithHistoryInput {
+  responsibleId: string | null;
+  actorId: string;
+  description: string;
+}
+
+/** Exclusão lógica (docs/05, `DELETE /processes/:id`; RF-28). */
+export interface SoftDeleteWithHistoryInput {
+  actorId: string;
+  description: string;
+}
+
 export interface ProcessFilters {
   stageId?: string | undefined;
   clientCompanyId?: string | undefined;

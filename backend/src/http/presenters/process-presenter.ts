@@ -122,7 +122,7 @@ interface ProcessHistoryEntryDto {
   createdAt: string;
 }
 
-function presentHistoryEntry(entry: ProcessHistoryEntry): ProcessHistoryEntryDto {
+export function presentHistoryEntry(entry: ProcessHistoryEntry): ProcessHistoryEntryDto {
   return {
     id: entry.id,
     action: entry.action,

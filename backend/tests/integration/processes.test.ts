@@ -388,4 +388,297 @@ describe('Processos — criação e listagem com escopo (integração)', () => {
       expect(body.history.some((entry) => entry.action === 'PROCESS_UPDATED')).toBe(true);
     });
   });
+
+  describe('PATCH /processes/:id/stage — movimentação (RF-25, RF-27; docs/12 Tarefa 10)', () => {
+    it('mover gera STAGE_CHANGED com origem, destino, autor e timestamp', async () => {
+      const company = await prisma.company.create({
+        data: {
+          cnpj: '11222333000181',
+          legalName: 'Cliente Movimentação LTDA',
+          organizationId: clientOrganizationId,
+        },
+      });
+      const createResponse = await request(app)
+        .post(PROCESSES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ clientCompanyId: company.id, reference: 'Processo a mover' });
+      const processId = (createResponse.body as { id: string }).id;
+      const andamentoStage = await prisma.kanbanStage.findFirst({
+        where: { name: 'Em Andamento' },
+      });
+
+      const moveResponse = await request(app)
+        .patch(`${PROCESSES_BASE}/${processId}/stage`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ toStageId: andamentoStage!.id, note: 'Documentação liberada.' });
+
+      expect(moveResponse.status).toBe(200);
+      const body = moveResponse.body as {
+        currentStage: { id: string };
+        history: Array<{
+          action: string;
+          fromStage: { name: string } | null;
+          toStage: { name: string } | null;
+          actor: { id: string };
+          createdAt: string;
+        }>;
+      };
+      expect(body.currentStage.id).toBe(andamentoStage!.id);
+      const entry = body.history.find((h) => h.action === 'STAGE_CHANGED');
+      expect(entry).toBeDefined();
+      expect(entry?.fromStage?.name).toBe('Entrada');
+      expect(entry?.toStage?.name).toBe('Em Andamento');
+      expect(entry?.actor.id).toBeDefined();
+      expect(entry?.createdAt).toBeDefined();
+    });
+
+    it('entrar em etapa final grava completedAt; sair limpa completedAt', async () => {
+      const company = await prisma.company.create({
+        data: {
+          cnpj: '11222333000181',
+          legalName: 'Cliente Conclusão LTDA',
+          organizationId: clientOrganizationId,
+        },
+      });
+      const createResponse = await request(app)
+        .post(PROCESSES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ clientCompanyId: company.id, reference: 'Processo a concluir' });
+      const processId = (createResponse.body as { id: string }).id;
+      const andamentoStage = await prisma.kanbanStage.findFirst({
+        where: { name: 'Em Andamento' },
+      });
+      const finalStage = await prisma.kanbanStage.findFirst({ where: { name: 'Concluído' } });
+
+      const completeResponse = await request(app)
+        .patch(`${PROCESSES_BASE}/${processId}/stage`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ toStageId: finalStage!.id });
+      expect((completeResponse.body as { completedAt: string | null }).completedAt).not.toBeNull();
+
+      const reopenResponse = await request(app)
+        .patch(`${PROCESSES_BASE}/${processId}/stage`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ toStageId: andamentoStage!.id });
+      expect((reopenResponse.body as { completedAt: string | null }).completedAt).toBeNull();
+    });
+
+    it('CLIENT recebe 403 ao mover', async () => {
+      const company = await prisma.company.create({
+        data: {
+          cnpj: '11222333000181',
+          legalName: 'Cliente Restrito LTDA',
+          organizationId: clientOrganizationId,
+        },
+      });
+      const createResponse = await request(app)
+        .post(PROCESSES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ clientCompanyId: company.id, reference: 'Processo restrito' });
+      const processId = (createResponse.body as { id: string }).id;
+      const andamentoStage = await prisma.kanbanStage.findFirst({
+        where: { name: 'Em Andamento' },
+      });
+
+      const clientToken = await createClientAndLogin(app, 'cliente1@clientex-teste.com.br');
+
+      const moveResponse = await request(app)
+        .patch(`${PROCESSES_BASE}/${processId}/stage`)
+        .set('Authorization', `Bearer ${clientToken}`)
+        .send({ toStageId: andamentoStage!.id });
+
+      expect(moveResponse.status).toBe(403);
+    });
+
+    it('mover para a etapa atual responde 409 CONFLICT', async () => {
+      const company = await prisma.company.create({
+        data: {
+          cnpj: '11222333000181',
+          legalName: 'Cliente Conflito LTDA',
+          organizationId: clientOrganizationId,
+        },
+      });
+      const createResponse = await request(app)
+        .post(PROCESSES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ clientCompanyId: company.id, reference: 'Processo conflito' });
+      const processId = (createResponse.body as { id: string }).id;
+      const entradaStage = await prisma.kanbanStage.findFirst({ where: { name: 'Entrada' } });
+
+      const moveResponse = await request(app)
+        .patch(`${PROCESSES_BASE}/${processId}/stage`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ toStageId: entradaStage!.id });
+
+      expect(moveResponse.status).toBe(409);
+    });
+  });
+
+  describe('PATCH /processes/:id/responsible (RF-26; docs/12 Tarefa 10)', () => {
+    it('atribui usuário interno ativo como responsável', async () => {
+      const company = await prisma.company.create({
+        data: {
+          cnpj: '11222333000181',
+          legalName: 'Cliente Responsável LTDA',
+          organizationId: clientOrganizationId,
+        },
+      });
+      const createResponse = await request(app)
+        .post(PROCESSES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ clientCompanyId: company.id, reference: 'Processo com responsável' });
+      const processId = (createResponse.body as { id: string }).id;
+
+      const operational = await prisma.user.create({
+        data: {
+          name: 'Carlos Souza',
+          email: 'carlos@opusce-teste.com.br',
+          role: 'OPERATIONAL',
+          status: 'ACTIVE',
+          accessScope: 'ORGANIZATION',
+          organizationId: internalOrganizationId,
+        },
+      });
+
+      const response = await request(app)
+        .patch(`${PROCESSES_BASE}/${processId}/responsible`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ responsibleId: operational.id });
+
+      expect(response.status).toBe(200);
+      const body = response.body as {
+        responsible: { id: string } | null;
+        history: Array<{ action: string }>;
+      };
+      expect(body.responsible?.id).toBe(operational.id);
+      expect(body.history.some((h) => h.action === 'RESPONSIBLE_CHANGED')).toBe(true);
+    });
+
+    it('atribuir CLIENT como responsável responde 400', async () => {
+      const company = await prisma.company.create({
+        data: {
+          cnpj: '11222333000181',
+          legalName: 'Cliente Inválido LTDA',
+          organizationId: clientOrganizationId,
+        },
+      });
+      const createResponse = await request(app)
+        .post(PROCESSES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ clientCompanyId: company.id, reference: 'Processo' });
+      const processId = (createResponse.body as { id: string }).id;
+
+      const clientUser = await prisma.user.create({
+        data: {
+          name: 'Cliente Qualquer',
+          email: 'clientequalquer@clientex-teste.com.br',
+          role: 'CLIENT',
+          status: 'ACTIVE',
+          accessScope: 'ORGANIZATION',
+          organizationId: clientOrganizationId,
+        },
+      });
+
+      const response = await request(app)
+        .patch(`${PROCESSES_BASE}/${processId}/responsible`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ responsibleId: clientUser.id });
+
+      expect(response.status).toBe(400);
+    });
+  });
+
+  describe('DELETE /processes/:id (RF-28, RF-29; docs/12 Tarefa 10)', () => {
+    it('processo excluído desaparece de listagem e board mas o histórico permanece consultável', async () => {
+      const company = await prisma.company.create({
+        data: {
+          cnpj: '11222333000181',
+          legalName: 'Cliente Exclusão LTDA',
+          organizationId: clientOrganizationId,
+        },
+      });
+      const createResponse = await request(app)
+        .post(PROCESSES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ clientCompanyId: company.id, reference: 'Processo a excluir' });
+      const processId = (createResponse.body as { id: string }).id;
+
+      const deleteResponse = await request(app)
+        .delete(`${PROCESSES_BASE}/${processId}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(deleteResponse.status).toBe(204);
+
+      const listResponse = await request(app)
+        .get(PROCESSES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`);
+      const listBody = listResponse.body as { data: Array<{ id: string }> };
+      expect(listBody.data.some((item) => item.id === processId)).toBe(false);
+
+      const boardResponse = await request(app)
+        .get(`${PROCESSES_BASE}/board`)
+        .set('Authorization', `Bearer ${adminToken}`);
+      const boardBody = boardResponse.body as {
+        stages: Array<{ processes: Array<{ id: string }> }>;
+      };
+      const stillOnBoard = boardBody.stages.some((stage) =>
+        stage.processes.some((p) => p.id === processId),
+      );
+      expect(stillOnBoard).toBe(false);
+
+      const historyResponse = await request(app)
+        .get(`${PROCESSES_BASE}/${processId}/history`)
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(historyResponse.status).toBe(200);
+      const historyBody = historyResponse.body as { data: Array<{ action: string }> };
+      expect(historyBody.data.some((entry) => entry.action === 'PROCESS_DELETED')).toBe(true);
+    });
+
+    it('CLIENT recebe 403 ao excluir', async () => {
+      const company = await prisma.company.create({
+        data: {
+          cnpj: '11222333000181',
+          legalName: 'Cliente Restrito Exclusão LTDA',
+          organizationId: clientOrganizationId,
+        },
+      });
+      const createResponse = await request(app)
+        .post(PROCESSES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ clientCompanyId: company.id, reference: 'Processo' });
+      const processId = (createResponse.body as { id: string }).id;
+
+      const clientToken = await createClientAndLogin(app, 'cliente1@clientex-teste.com.br');
+
+      const deleteResponse = await request(app)
+        .delete(`${PROCESSES_BASE}/${processId}`)
+        .set('Authorization', `Bearer ${clientToken}`);
+
+      expect(deleteResponse.status).toBe(403);
+    });
+  });
+
+  describe('GET /processes/:id/history (RF-29; docs/12 Tarefa 10)', () => {
+    it('processo de outro escopo responde 404 no histórico', async () => {
+      const otherOrg = await prisma.organization.create({
+        data: { name: 'Outra Org Histórico', isInternal: false },
+      });
+      const otherCompany = await prisma.company.create({
+        data: { cnpj: '11444777000161', legalName: 'Outra Empresa', organizationId: otherOrg.id },
+      });
+
+      const createResponse = await request(app)
+        .post(PROCESSES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ clientCompanyId: otherCompany.id, reference: 'Processo de outra org' });
+      const processId = (createResponse.body as { id: string }).id;
+
+      const clientToken = await createClientAndLogin(app, 'cliente1@clientex-teste.com.br');
+
+      const historyResponse = await request(app)
+        .get(`${PROCESSES_BASE}/${processId}/history`)
+        .set('Authorization', `Bearer ${clientToken}`);
+
+      expect(historyResponse.status).toBe(404);
+    });
+  });
 });

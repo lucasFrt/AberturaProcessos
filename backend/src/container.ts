@@ -123,6 +123,7 @@ export function buildContainer(prisma: PrismaClient): Container {
     processRepository,
     companyRepository,
     stageRepository: kanbanStageRepository,
+    userRepository,
   });
 
   return {

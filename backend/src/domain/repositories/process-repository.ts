@@ -1,12 +1,16 @@
 import type { AccessScope } from '@/domain/entities/access-scope';
 import type {
+  AssignResponsibleWithHistoryInput,
   CreateProcessWithHistoryInput,
+  MoveStageWithHistoryInput,
   Process,
   ProcessBoardStageResult,
   ProcessDetail,
   ProcessFilters,
+  ProcessHistoryEntry,
   ProcessListItem,
   ProcessSort,
+  SoftDeleteWithHistoryInput,
   UpdateProcessWithHistoryInput,
 } from '@/domain/entities/process';
 import type { Page, PaginationParams } from '@/domain/pagination';
@@ -41,4 +45,24 @@ export interface ProcessRepository {
   createWithHistory(input: CreateProcessWithHistoryInput): Promise<ProcessDetail>;
   /** Atualiza campos e grava histórico `PROCESS_UPDATED` com o diff, na mesma transação. */
   updateWithHistory(id: string, input: UpdateProcessWithHistoryInput): Promise<ProcessDetail>;
+  /**
+   * Move de etapa e grava histórico `STAGE_CHANGED` na mesma transação
+   * (docs/12, Tarefa 10 — se a escrita do histórico falhar, a mudança de
+   * etapa é desfeita). Atualiza `stageChangedAt` e `completedAt` conforme
+   * `toStageIsFinal`.
+   */
+  moveStageWithHistory(id: string, input: MoveStageWithHistoryInput): Promise<ProcessDetail>;
+  /** Define/limpa o responsável e grava histórico `RESPONSIBLE_CHANGED`, na mesma transação. */
+  assignResponsibleWithHistory(
+    id: string,
+    input: AssignResponsibleWithHistoryInput,
+  ): Promise<ProcessDetail>;
+  /** Exclusão lógica (`deletedAt`/`deletedById`) e histórico `PROCESS_DELETED`, na mesma transação. */
+  softDeleteWithHistory(id: string, input: SoftDeleteWithHistoryInput): Promise<void>;
+  /** Trilha paginada em ordem cronológica (docs/05, `GET /processes/:id/history`). */
+  listHistory(
+    id: string,
+    scope: AccessScope,
+    pagination: PaginationParams,
+  ): Promise<Page<ProcessHistoryEntry> | null>;
 }

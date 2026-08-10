@@ -1,10 +1,16 @@
 import { InMemoryCompanyRepository } from '../helpers/fakes/in-memory-company-repository';
 import { InMemoryKanbanStageRepository } from '../helpers/fakes/in-memory-kanban-stage-repository';
 import { InMemoryProcessRepository } from '../helpers/fakes/in-memory-process-repository';
+import { InMemoryUserRepository } from '../helpers/fakes/in-memory-user-repository';
 
 import type { AccessScope } from '@/domain/entities/access-scope';
 import type { Company } from '@/domain/entities/company';
-import { ForbiddenError, NotFoundError, ValidationError } from '@/domain/errors/app-error';
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from '@/domain/errors/app-error';
 import { ProcessService } from '@/services/process-service';
 
 const ALL_SCOPE: AccessScope = { kind: 'ALL' };
@@ -14,12 +20,19 @@ function buildContext(): {
   processRepository: InMemoryProcessRepository;
   companyRepository: InMemoryCompanyRepository;
   stageRepository: InMemoryKanbanStageRepository;
+  userRepository: InMemoryUserRepository;
 } {
   const processRepository = new InMemoryProcessRepository();
   const companyRepository = new InMemoryCompanyRepository();
   const stageRepository = new InMemoryKanbanStageRepository();
-  const service = new ProcessService({ processRepository, companyRepository, stageRepository });
-  return { service, processRepository, companyRepository, stageRepository };
+  const userRepository = new InMemoryUserRepository();
+  const service = new ProcessService({
+    processRepository,
+    companyRepository,
+    stageRepository,
+    userRepository,
+  });
+  return { service, processRepository, companyRepository, stageRepository, userRepository };
 }
 
 function pushCompany(
@@ -310,6 +323,314 @@ describe('ProcessService', () => {
       await expect(
         service.update(created.id, 'user-1', scope, { clientCompanyId: outOfScope.id }),
       ).rejects.toBeInstanceOf(ForbiddenError);
+    });
+  });
+
+  describe('moveStage', () => {
+    it('move para outra etapa e grava histórico STAGE_CHANGED com origem, destino, autor e timestamp', async () => {
+      const { service, companyRepository, processRepository, stageRepository } = buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      const entradaId = await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      const andamentoId = await pushStage(stageRepository, processRepository, 'Em Andamento', 1);
+      processRepository.users.push({ id: 'user-1', name: 'Maria', email: 'maria@x.com' });
+
+      const created = await service.create('user-1', ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Processo a mover',
+      });
+
+      const moved = await service.moveStage(created.id, 'user-1', ALL_SCOPE, {
+        toStageId: andamentoId,
+      });
+
+      expect(moved.currentStage.id).toBe(andamentoId);
+      const entry = moved.history.find((h) => h.action === 'STAGE_CHANGED');
+      expect(entry).toBeDefined();
+      expect(entry?.fromStage?.id).toBe(entradaId);
+      expect(entry?.toStage?.id).toBe(andamentoId);
+      expect(entry?.actor.id).toBe('user-1');
+      expect(entry?.createdAt).toBeInstanceOf(Date);
+    });
+
+    it('grava completedAt ao entrar em etapa final e limpa ao saltar para etapa não final', async () => {
+      const { service, companyRepository, processRepository, stageRepository } = buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      const andamentoId = await pushStage(stageRepository, processRepository, 'Em Andamento', 1);
+      const finalStage = await stageRepository.create({ name: 'Concluído', order: 2 });
+      await stageRepository.update(finalStage.id, { isFinal: true });
+      processRepository.stages.push({
+        id: finalStage.id,
+        name: finalStage.name,
+        color: finalStage.color,
+        order: finalStage.order,
+        isFinal: true,
+      });
+      processRepository.users.push({ id: 'user-1', name: 'Maria', email: 'maria@x.com' });
+
+      const created = await service.create('user-1', ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Processo final',
+      });
+
+      const completed = await service.moveStage(created.id, 'user-1', ALL_SCOPE, {
+        toStageId: finalStage.id,
+      });
+      expect(completed.completedAt).not.toBeNull();
+
+      const reopened = await service.moveStage(created.id, 'user-1', ALL_SCOPE, {
+        toStageId: andamentoId,
+      });
+      expect(reopened.completedAt).toBeNull();
+    });
+
+    it('mover para a etapa atual responde 409 CONFLICT', async () => {
+      const { service, companyRepository, processRepository, stageRepository } = buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      const entradaId = await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      processRepository.users.push({ id: 'user-1', name: 'Maria', email: 'maria@x.com' });
+
+      const created = await service.create('user-1', ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Processo',
+      });
+
+      await expect(
+        service.moveStage(created.id, 'user-1', ALL_SCOPE, { toStageId: entradaId }),
+      ).rejects.toBeInstanceOf(ConflictError);
+    });
+
+    it('processo fora do escopo responde 404 ao tentar mover', async () => {
+      const { service, companyRepository, processRepository, stageRepository } = buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      const andamentoId = await pushStage(stageRepository, processRepository, 'Em Andamento', 1);
+      processRepository.users.push({ id: 'user-1', name: 'Maria', email: 'maria@x.com' });
+
+      const created = await service.create('user-1', ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Processo',
+      });
+
+      const otherScope: AccessScope = { kind: 'COMPANIES', companyIds: ['outra-empresa'] };
+
+      await expect(
+        service.moveStage(created.id, 'user-1', otherScope, { toStageId: andamentoId }),
+      ).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it('falha na escrita do histórico desfaz a mudança de etapa (atomicidade)', async () => {
+      const { service, companyRepository, processRepository, stageRepository } = buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      const andamentoId = await pushStage(stageRepository, processRepository, 'Em Andamento', 1);
+      processRepository.users.push({ id: 'user-1', name: 'Maria', email: 'maria@x.com' });
+
+      const created = await service.create('user-1', ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Processo',
+      });
+
+      // Simula falha na escrita do histórico dentro da transação — o fake
+      // rejeita ANTES de mutar `items`, reproduzindo a garantia real do
+      // `$transaction` do Prisma (docs/12, Tarefa 10).
+      processRepository.failHistoryWrite = true;
+
+      await expect(
+        service.moveStage(created.id, 'user-1', ALL_SCOPE, { toStageId: andamentoId }),
+      ).rejects.toThrow('Falha simulada na escrita do histórico.');
+
+      processRepository.failHistoryWrite = false;
+      const detail = await service.findDetailById(created.id, ALL_SCOPE);
+      expect(detail.currentStage.id).not.toBe(andamentoId);
+      expect(detail.history.some((h) => h.action === 'STAGE_CHANGED')).toBe(false);
+    });
+  });
+
+  describe('assignResponsible', () => {
+    it('atribui responsável interno ativo e grava histórico RESPONSIBLE_CHANGED', async () => {
+      const { service, companyRepository, processRepository, stageRepository, userRepository } =
+        buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      processRepository.users.push({ id: 'user-1', name: 'Maria', email: 'maria@x.com' });
+      const operational = await userRepository.create({
+        name: 'Carlos Souza',
+        email: 'carlos@opusce.com.br',
+        passwordHash: null,
+        role: 'OPERATIONAL',
+        status: 'ACTIVE',
+        accessScope: 'ORGANIZATION',
+        organizationId: 'org-1',
+      });
+      processRepository.users.push({
+        id: operational.id,
+        name: operational.name,
+        email: operational.email,
+      });
+
+      const created = await service.create('user-1', ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Processo',
+      });
+
+      const updated = await service.assignResponsible(
+        created.id,
+        'user-1',
+        ALL_SCOPE,
+        operational.id,
+      );
+
+      expect(updated.responsible?.id).toBe(operational.id);
+      expect(updated.history.some((h) => h.action === 'RESPONSIBLE_CHANGED')).toBe(true);
+    });
+
+    it('atribuir CLIENT como responsável responde 400 VALIDATION_ERROR', async () => {
+      const { service, companyRepository, processRepository, stageRepository, userRepository } =
+        buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      processRepository.users.push({ id: 'user-1', name: 'Maria', email: 'maria@x.com' });
+      const clientUser = await userRepository.create({
+        name: 'Cliente Qualquer',
+        email: 'cliente@clientex.com.br',
+        passwordHash: null,
+        role: 'CLIENT',
+        status: 'ACTIVE',
+        accessScope: 'ORGANIZATION',
+        organizationId: 'org-2',
+      });
+
+      const created = await service.create('user-1', ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Processo',
+      });
+
+      await expect(
+        service.assignResponsible(created.id, 'user-1', ALL_SCOPE, clientUser.id),
+      ).rejects.toBeInstanceOf(ValidationError);
+    });
+
+    it('permite desatribuir responsável com responsibleId null', async () => {
+      const { service, companyRepository, processRepository, stageRepository, userRepository } =
+        buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      processRepository.users.push({ id: 'user-1', name: 'Maria', email: 'maria@x.com' });
+      const operational = await userRepository.create({
+        name: 'Carlos Souza',
+        email: 'carlos@opusce.com.br',
+        passwordHash: null,
+        role: 'OPERATIONAL',
+        status: 'ACTIVE',
+        accessScope: 'ORGANIZATION',
+        organizationId: 'org-1',
+      });
+      processRepository.users.push({
+        id: operational.id,
+        name: operational.name,
+        email: operational.email,
+      });
+
+      const created = await service.create('user-1', ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Processo',
+      });
+      await service.assignResponsible(created.id, 'user-1', ALL_SCOPE, operational.id);
+
+      const cleared = await service.assignResponsible(created.id, 'user-1', ALL_SCOPE, null);
+      expect(cleared.responsible).toBeNull();
+    });
+  });
+
+  describe('softDelete', () => {
+    it('exclui logicamente e grava histórico PROCESS_DELETED', async () => {
+      const { service, companyRepository, processRepository, stageRepository } = buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      processRepository.users.push({ id: 'user-1', name: 'Maria', email: 'maria@x.com' });
+
+      const created = await service.create('user-1', ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Processo a excluir',
+      });
+
+      await service.softDelete(created.id, 'user-1', ALL_SCOPE);
+
+      await expect(service.findDetailById(created.id, ALL_SCOPE)).rejects.toBeInstanceOf(
+        NotFoundError,
+      );
+
+      const history = await service.listHistory(created.id, ALL_SCOPE, { page: 1, pageSize: 20 });
+      expect(history.items.some((h) => h.action === 'PROCESS_DELETED')).toBe(true);
+    });
+
+    it('processo fora do escopo responde 404 ao excluir', async () => {
+      const { service, companyRepository, processRepository, stageRepository } = buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      processRepository.users.push({ id: 'user-1', name: 'Maria', email: 'maria@x.com' });
+
+      const created = await service.create('user-1', ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Processo',
+      });
+
+      const otherScope: AccessScope = { kind: 'COMPANIES', companyIds: ['outra-empresa'] };
+
+      await expect(service.softDelete(created.id, 'user-1', otherScope)).rejects.toBeInstanceOf(
+        NotFoundError,
+      );
     });
   });
 });

@@ -5,15 +5,19 @@ import { calculateProcessPermissions } from '@/domain/entities/process-permissio
 import { UnauthenticatedError } from '@/domain/errors/app-error';
 import { presentCollection } from '@/http/presenters/pagination-presenter';
 import {
+  presentHistoryEntry,
   presentProcessBoard,
   presentProcessCreated,
   presentProcessDetail,
   presentProcessListItem,
 } from '@/http/presenters/process-presenter';
 import type {
+  AssignResponsibleBody,
   CreateProcessBody,
   ListProcessesQuery,
+  MoveProcessStageBody,
   ProcessBoardQuery,
+  ProcessHistoryQuery,
   UpdateProcessBody,
 } from '@/http/schemas/process-schemas';
 import type { ProcessService } from '@/services/process-service';
@@ -152,6 +156,101 @@ export class ProcessController {
 
       const permissions = calculateProcessPermissions(req.auth.role);
       res.status(200).json(presentProcessDetail(detail, permissions));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  moveStage = (req: Request, res: Response, next: NextFunction): void => {
+    void this.handleMoveStage(req, res, next);
+  };
+
+  private async handleMoveStage(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.auth) throw new UnauthenticatedError();
+      const { id } = req.params as { id: string };
+      const body = req.body as MoveProcessStageBody;
+
+      const detail = await this.service.moveStage(id, req.auth.userId, req.auth.scope, {
+        toStageId: body.toStageId,
+        note: body.note,
+      });
+
+      const permissions = calculateProcessPermissions(req.auth.role);
+      res.status(200).json(presentProcessDetail(detail, permissions));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  assignResponsible = (req: Request, res: Response, next: NextFunction): void => {
+    void this.handleAssignResponsible(req, res, next);
+  };
+
+  private async handleAssignResponsible(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      if (!req.auth) throw new UnauthenticatedError();
+      const { id } = req.params as { id: string };
+      const body = req.body as AssignResponsibleBody;
+
+      const detail = await this.service.assignResponsible(
+        id,
+        req.auth.userId,
+        req.auth.scope,
+        body.responsibleId,
+      );
+
+      const permissions = calculateProcessPermissions(req.auth.role);
+      res.status(200).json(presentProcessDetail(detail, permissions));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  delete = (req: Request, res: Response, next: NextFunction): void => {
+    void this.handleDelete(req, res, next);
+  };
+
+  private async handleDelete(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.auth) throw new UnauthenticatedError();
+      const { id } = req.params as { id: string };
+
+      await this.service.softDelete(id, req.auth.userId, req.auth.scope);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  history = (req: Request, res: Response, next: NextFunction): void => {
+    void this.handleHistory(req, res, next);
+  };
+
+  private async handleHistory(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.auth) throw new UnauthenticatedError();
+      const { id } = req.params as { id: string };
+      const query = req.query as unknown as ProcessHistoryQuery;
+
+      const page = await this.service.listHistory(id, req.auth.scope, {
+        page: query.page,
+        pageSize: query.pageSize,
+      });
+
+      res
+        .status(200)
+        .json(
+          presentCollection(
+            page,
+            { page: query.page, pageSize: query.pageSize },
+            presentHistoryEntry,
+          ),
+        );
     } catch (error) {
       next(error);
     }

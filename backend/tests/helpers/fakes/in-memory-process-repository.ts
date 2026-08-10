@@ -1,6 +1,8 @@
 import type { AccessScope } from '@/domain/entities/access-scope';
 import type {
+  AssignResponsibleWithHistoryInput,
   CreateProcessWithHistoryInput,
+  MoveStageWithHistoryInput,
   Process,
   ProcessBoardStageResult,
   ProcessDetail,
@@ -8,6 +10,7 @@ import type {
   ProcessHistoryEntry,
   ProcessListItem,
   ProcessSort,
+  SoftDeleteWithHistoryInput,
   UpdateProcessWithHistoryInput,
 } from '@/domain/entities/process';
 import type { Page, PaginationParams } from '@/domain/pagination';
@@ -50,6 +53,14 @@ export class InMemoryProcessRepository implements ProcessRepository {
   readonly users: FakeUser[] = [];
   /** Ano forçado para os testes de geração de código, se necessário. */
   yearOverride: number | undefined;
+  /**
+   * Simula falha na escrita do histórico dentro da transação (docs/12,
+   * Tarefa 10 — "provar que falha na escrita do histórico desfaz a
+   * mudança de etapa"). Quando `true`, `moveStageWithHistory` rejeita
+   * ANTES de aplicar qualquer mutação em `items`, reproduzindo o
+   * comportamento do `$transaction` real do Prisma.
+   */
+  failHistoryWrite = false;
   private lastNumberByYear = new Map<number, number>();
 
   private scopeMatches(process: Process, scope: AccessScope): boolean {
@@ -273,5 +284,114 @@ export class InMemoryProcessRepository implements ProcessRepository {
     });
 
     return this.toDetail(updated);
+  }
+
+  async moveStageWithHistory(id: string, input: MoveStageWithHistoryInput): Promise<ProcessDetail> {
+    // Reproduz a garantia de atomicidade da transação Prisma real: se a
+    // escrita do histórico "falhasse", nenhuma mutação de `items` teria
+    // sido persistida (docs/12, Tarefa 10).
+    if (this.failHistoryWrite) {
+      throw new Error('Falha simulada na escrita do histórico.');
+    }
+
+    const index = this.items.findIndex((item) => item.id === id);
+    if (index === -1) throw new Error(`Process ${id} não encontrado no fake.`);
+    const current = this.items[index];
+    if (!current) throw new Error(`Process ${id} não encontrado no fake.`);
+
+    const now = new Date();
+    const updated: Process = {
+      ...current,
+      currentStageId: input.toStageId,
+      stageChangedAt: now,
+      completedAt: input.toStageIsFinal ? now : null,
+      updatedAt: now,
+    };
+    this.items[index] = updated;
+
+    historyIdCounter += 1;
+    this.history.push({
+      id: `history-${historyIdCounter}`,
+      processId: id,
+      action: 'STAGE_CHANGED',
+      fromStage: this.stageSummary(input.fromStageId),
+      toStage: this.stageSummary(input.toStageId),
+      actor: this.userSummary(input.actorId),
+      description: input.description,
+      metadata: input.note ? JSON.stringify({ note: input.note }) : null,
+      createdAt: now,
+    });
+
+    return this.toDetail(updated);
+  }
+
+  async assignResponsibleWithHistory(
+    id: string,
+    input: AssignResponsibleWithHistoryInput,
+  ): Promise<ProcessDetail> {
+    const index = this.items.findIndex((item) => item.id === id);
+    if (index === -1) throw new Error(`Process ${id} não encontrado no fake.`);
+    const current = this.items[index];
+    if (!current) throw new Error(`Process ${id} não encontrado no fake.`);
+
+    const updated: Process = {
+      ...current,
+      responsibleId: input.responsibleId,
+      updatedAt: new Date(),
+    };
+    this.items[index] = updated;
+
+    historyIdCounter += 1;
+    this.history.push({
+      id: `history-${historyIdCounter}`,
+      processId: id,
+      action: 'RESPONSIBLE_CHANGED',
+      fromStage: null,
+      toStage: null,
+      actor: this.userSummary(input.actorId),
+      description: input.description,
+      metadata: null,
+      createdAt: new Date(),
+    });
+
+    return this.toDetail(updated);
+  }
+
+  async softDeleteWithHistory(id: string, input: SoftDeleteWithHistoryInput): Promise<void> {
+    const index = this.items.findIndex((item) => item.id === id);
+    if (index === -1) throw new Error(`Process ${id} não encontrado no fake.`);
+    const current = this.items[index];
+    if (!current) throw new Error(`Process ${id} não encontrado no fake.`);
+
+    this.items[index] = { ...current, deletedAt: new Date(), deletedById: input.actorId };
+
+    historyIdCounter += 1;
+    this.history.push({
+      id: `history-${historyIdCounter}`,
+      processId: id,
+      action: 'PROCESS_DELETED',
+      fromStage: null,
+      toStage: null,
+      actor: this.userSummary(input.actorId),
+      description: input.description,
+      metadata: null,
+      createdAt: new Date(),
+    });
+  }
+
+  async listHistory(
+    id: string,
+    scope: AccessScope,
+    pagination: PaginationParams,
+  ): Promise<Page<ProcessHistoryEntry> | null> {
+    const process = this.items.find((item) => item.id === id);
+    if (!process || !this.scopeMatches(process, scope)) return null;
+
+    const entries = this.history
+      .filter((entry) => entry.processId === id)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+    const start = (pagination.page - 1) * pagination.pageSize;
+    return { items: entries.slice(start, start + pagination.pageSize), total: entries.length };
   }
 }

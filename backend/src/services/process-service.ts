@@ -4,21 +4,29 @@ import type {
   ProcessBoardStageResult,
   ProcessDetail,
   ProcessFilters,
+  ProcessHistoryEntry,
   ProcessListItem,
   ProcessSort,
   ProcessUpdateDiffEntry,
   UpdateProcessData,
 } from '@/domain/entities/process';
-import { ForbiddenError, NotFoundError, ValidationError } from '@/domain/errors/app-error';
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from '@/domain/errors/app-error';
 import type { Page, PaginationParams } from '@/domain/pagination';
 import type { CompanyRepository } from '@/domain/repositories/company-repository';
 import type { KanbanStageRepository } from '@/domain/repositories/kanban-stage-repository';
 import type { ProcessRepository } from '@/domain/repositories/process-repository';
+import type { UserRepository } from '@/domain/repositories/user-repository';
 
 export interface ProcessServiceDeps {
   processRepository: ProcessRepository;
   companyRepository: CompanyRepository;
   stageRepository: KanbanStageRepository;
+  userRepository: UserRepository;
 }
 
 export interface CreateProcessInput {
@@ -161,6 +169,115 @@ export class ProcessService {
       description: `Processo atualizado: ${diff.map((entry) => entry.field).join(', ')}.`,
       diff,
     });
+  }
+
+  /**
+   * Move o processo para outra etapa (RF-25, RF-27; docs/05,
+   * `PATCH /processes/:id/stage`). `authorize('OPERATIONAL', 'ADMIN')` já
+   * bloqueia CLIENT na rota; aqui ficam as regras de estado (etapa igual à
+   * atual, existência da etapa destino) que não dependem de papel.
+   */
+  async moveStage(
+    id: string,
+    actorId: string,
+    scope: AccessScope,
+    input: { toStageId: string; note?: string | null | undefined },
+  ): Promise<ProcessDetail> {
+    const current = await this.deps.processRepository.findRawById(id, scope);
+    if (!current) {
+      throw new NotFoundError('NOT_FOUND', 'Processo não encontrado.');
+    }
+
+    if (input.toStageId === current.currentStageId) {
+      throw new ConflictError('CONFLICT', 'O processo já está nesta etapa.');
+    }
+
+    const toStage = await this.deps.stageRepository.findById(input.toStageId);
+    if (!toStage) {
+      throw new ValidationError('Etapa de destino inválida.');
+    }
+
+    const fromStage = await this.deps.stageRepository.findById(current.currentStageId);
+
+    return this.deps.processRepository.moveStageWithHistory(id, {
+      fromStageId: current.currentStageId,
+      toStageId: input.toStageId,
+      toStageIsFinal: toStage.isFinal,
+      actorId,
+      note: input.note ?? null,
+      description: `Etapa alterada de ${fromStage?.name ?? 'desconhecida'} para ${toStage.name}.`,
+    });
+  }
+
+  /**
+   * Define/limpa o responsável (RF-26; docs/05,
+   * `PATCH /processes/:id/responsible`). O responsável precisa ser
+   * usuário ativo OPERATIONAL ou ADMIN, senão `400 VALIDATION_ERROR`
+   * (validação do papel do atribuído, não de quem chama).
+   */
+  async assignResponsible(
+    id: string,
+    actorId: string,
+    scope: AccessScope,
+    responsibleId: string | null,
+  ): Promise<ProcessDetail> {
+    const current = await this.deps.processRepository.findRawById(id, scope);
+    if (!current) {
+      throw new NotFoundError('NOT_FOUND', 'Processo não encontrado.');
+    }
+
+    let description: string;
+    if (responsibleId === null) {
+      description = 'Responsável removido.';
+    } else {
+      const responsible = await this.deps.userRepository.findById(responsibleId);
+      if (
+        !responsible ||
+        responsible.status !== 'ACTIVE' ||
+        (responsible.role !== 'OPERATIONAL' && responsible.role !== 'ADMIN')
+      ) {
+        throw new ValidationError(
+          'O responsável precisa ser um usuário interno ativo (OPERATIONAL ou ADMIN).',
+        );
+      }
+      description = `Responsável definido: ${responsible.name}.`;
+    }
+
+    return this.deps.processRepository.assignResponsibleWithHistory(id, {
+      responsibleId,
+      actorId,
+      description,
+    });
+  }
+
+  /** Exclusão lógica (RF-28; docs/05, `DELETE /processes/:id`). */
+  async softDelete(id: string, actorId: string, scope: AccessScope): Promise<void> {
+    const current = await this.deps.processRepository.findRawById(id, scope);
+    if (!current) {
+      throw new NotFoundError('NOT_FOUND', 'Processo não encontrado.');
+    }
+
+    await this.deps.processRepository.softDeleteWithHistory(id, {
+      actorId,
+      description: `Processo ${current.code} excluído.`,
+    });
+  }
+
+  /**
+   * Trilha paginada em ordem cronológica (RF-29; docs/05,
+   * `GET /processes/:id/history`). Fora do escopo responde 404, como o
+   * detalhe do processo.
+   */
+  async listHistory(
+    id: string,
+    scope: AccessScope,
+    pagination: PaginationParams,
+  ): Promise<Page<ProcessHistoryEntry>> {
+    const page = await this.deps.processRepository.listHistory(id, scope, pagination);
+    if (!page) {
+      throw new NotFoundError('NOT_FOUND', 'Processo não encontrado.');
+    }
+    return page;
   }
 }
 

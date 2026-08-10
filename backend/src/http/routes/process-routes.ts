@@ -7,9 +7,12 @@ import { authorize } from '@/http/middlewares/authorize';
 import type { RateLimiters } from '@/http/middlewares/rate-limit';
 import { validate } from '@/http/middlewares/validate';
 import {
+  assignResponsibleSchema,
   createProcessSchema,
   listProcessesQuerySchema,
+  moveProcessStageSchema,
   processBoardQuerySchema,
+  processHistoryQuerySchema,
   processIdParamsSchema,
   updateProcessSchema,
 } from '@/http/schemas/process-schemas';
@@ -50,6 +53,35 @@ export function buildProcessRouter(
     authorize('CLIENT', 'OPERATIONAL', 'ADMIN'),
     validate({ params: processIdParamsSchema, body: updateProcessSchema }),
     controller.update,
+  );
+
+  // Mover, atribuir responsável e excluir são restritos a usuários
+  // internos (docs/05, docs/02 "Matriz de permissões") — CLIENT recebe 403.
+  router.patch(
+    '/:id/stage',
+    authorize('OPERATIONAL', 'ADMIN'),
+    validate({ params: processIdParamsSchema, body: moveProcessStageSchema }),
+    controller.moveStage,
+  );
+
+  router.patch(
+    '/:id/responsible',
+    authorize('OPERATIONAL', 'ADMIN'),
+    validate({ params: processIdParamsSchema, body: assignResponsibleSchema }),
+    controller.assignResponsible,
+  );
+
+  router.delete(
+    '/:id',
+    authorize('OPERATIONAL', 'ADMIN'),
+    validate({ params: processIdParamsSchema }),
+    controller.delete,
+  );
+
+  router.get(
+    '/:id/history',
+    validate({ params: processIdParamsSchema, query: processHistoryQuerySchema }),
+    controller.history,
   );
 
   return router;

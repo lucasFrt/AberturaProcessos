@@ -2,8 +2,10 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 
 import type { AccessScope } from '@/domain/entities/access-scope';
 import type {
+  AssignResponsibleWithHistoryInput,
   CompanySummary,
   CreateProcessWithHistoryInput,
+  MoveStageWithHistoryInput,
   Process,
   ProcessBoardStageResult,
   ProcessDetail,
@@ -12,6 +14,7 @@ import type {
   ProcessHistoryEntry,
   ProcessListItem,
   ProcessSort,
+  SoftDeleteWithHistoryInput,
   StageSummary,
   UpdateProcessWithHistoryInput,
   UserSummary,
@@ -369,5 +372,118 @@ export class PrismaProcessRepository implements ProcessRepository {
       throw new AppError('INTERNAL_ERROR', 'Falha ao carregar o processo atualizado.', 500);
     }
     return detail;
+  }
+
+  async moveStageWithHistory(id: string, input: MoveStageWithHistoryInput): Promise<ProcessDetail> {
+    await this.prisma.$transaction(async (tx) => {
+      const now = new Date();
+
+      await tx.process.update({
+        where: { id },
+        data: {
+          currentStageId: input.toStageId,
+          stageChangedAt: now,
+          completedAt: input.toStageIsFinal ? now : null,
+        },
+      });
+
+      // Grava o histórico na MESMA transação (docs/12, Tarefa 10): se esta
+      // escrita falhar, o `update` acima é desfeito pelo rollback.
+      await tx.processHistory.create({
+        data: {
+          processId: id,
+          action: 'STAGE_CHANGED',
+          fromStageId: input.fromStageId,
+          toStageId: input.toStageId,
+          actorId: input.actorId,
+          description: input.description,
+          metadata: input.note ? JSON.stringify({ note: input.note }) : null,
+        },
+      });
+    });
+
+    const detail = await this.findDetailById(id, { kind: 'ALL' });
+    if (!detail) {
+      throw new AppError('INTERNAL_ERROR', 'Falha ao carregar o processo movido.', 500);
+    }
+    return detail;
+  }
+
+  async assignResponsibleWithHistory(
+    id: string,
+    input: AssignResponsibleWithHistoryInput,
+  ): Promise<ProcessDetail> {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.process.update({
+        where: { id },
+        data: { responsibleId: input.responsibleId },
+      });
+
+      await tx.processHistory.create({
+        data: {
+          processId: id,
+          action: 'RESPONSIBLE_CHANGED',
+          actorId: input.actorId,
+          description: input.description,
+        },
+      });
+    });
+
+    const detail = await this.findDetailById(id, { kind: 'ALL' });
+    if (!detail) {
+      throw new AppError('INTERNAL_ERROR', 'Falha ao carregar o processo atualizado.', 500);
+    }
+    return detail;
+  }
+
+  async softDeleteWithHistory(id: string, input: SoftDeleteWithHistoryInput): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.process.update({
+        where: { id },
+        data: { deletedAt: new Date(), deletedById: input.actorId },
+      });
+
+      await tx.processHistory.create({
+        data: {
+          processId: id,
+          action: 'PROCESS_DELETED',
+          actorId: input.actorId,
+          description: input.description,
+        },
+      });
+    });
+  }
+
+  async listHistory(
+    id: string,
+    scope: AccessScope,
+    pagination: PaginationParams,
+  ): Promise<Page<ProcessHistoryEntry> | null> {
+    // Histórico deve permanecer consultável mesmo após exclusão lógica do
+    // processo (docs/12, Tarefa 10) — por isso não filtra `deletedAt` aqui.
+    const process = await this.prisma.process.findFirst({
+      where: { id, ...scopeWhere(scope) },
+      select: { id: true },
+    });
+    if (!process) return null;
+
+    const where: Prisma.ProcessHistoryWhereInput = { processId: id };
+
+    const [rows, total] = await Promise.all([
+      this.prisma.processHistory.findMany({
+        where,
+        orderBy: { createdAt: 'asc' },
+        skip: (pagination.page - 1) * pagination.pageSize,
+        take: pagination.pageSize,
+        include: {
+          actor: { select: { id: true, name: true } },
+          fromStage: { select: { id: true, name: true } },
+          toStage: { select: { id: true, name: true } },
+        },
+      }),
+      this.prisma.processHistory.count({ where }),
+    ]);
+
+    return { items: rows.map(mapHistoryEntry), total };
   }
 }

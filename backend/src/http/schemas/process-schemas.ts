@@ -54,3 +54,17 @@ export const processBoardQuerySchema = z.object({
 export type ProcessBoardQuery = z.infer<typeof processBoardQuerySchema>;
 
 export const processIdParamsSchema = z.object({ id: z.string().min(1) });
+
+export const moveProcessStageSchema = z.object({
+  toStageId: z.string().min(1, 'toStageId é obrigatório.'),
+  note: z.string().max(1000).nullable().optional(),
+});
+export type MoveProcessStageBody = z.infer<typeof moveProcessStageSchema>;
+
+export const assignResponsibleSchema = z.object({
+  responsibleId: z.string().min(1).nullable(),
+});
+export type AssignResponsibleBody = z.infer<typeof assignResponsibleSchema>;
+
+export const processHistoryQuerySchema = paginationQuerySchema;
+export type ProcessHistoryQuery = z.infer<typeof processHistoryQuerySchema>;
