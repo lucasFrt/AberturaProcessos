@@ -1,9 +1,10 @@
 import type { ReactElement } from 'react';
-import { useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useMemo, useRef } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import type { BoardFilters } from '@/features/processes/api/process-api';
 import { KanbanBoard } from '@/features/processes/components/KanbanBoard';
+import { ProcessDrawer } from '@/features/processes/components/ProcessDrawer';
 import { ProcessFilters } from '@/features/processes/components/ProcessFilters';
 import { useBoard } from '@/features/processes/hooks/useBoard';
 import { EmptyState } from '@/shared/components/EmptyState';
@@ -31,12 +32,21 @@ function filtersFromSearchParams(params: URLSearchParams): BoardFilters {
  * `/board` (docs/08, "Board Kanban"; docs/12, Tarefa 17). Filtros
  * persistidos na querystring via `useSearchParams`, para o link ser
  * compartilhável e sobreviver ao F5. `/processes/:id` reaproveita esta
- * página (docs/08, "Rotas e proteção") — a gaveta de detalhe chega na
- * Tarefa 19.
+ * página (docs/08, "Rotas e proteção"): o `:id` da rota abre a
+ * `ProcessDrawer` sobre o board (docs/12, Tarefa 19). Fechar a gaveta
+ * navega de volta para `/board` preservando a querystring atual; o foco
+ * volta para o container do board — devolver o foco exatamente ao card
+ * que abriu a gaveta exigiria guardar uma ref por card antes da
+ * navegação, o que não é trivial com o roteamento por URL (o card pode
+ * nem estar montado quando a gaveta fecha, ex.: filtro mudou); a
+ * limitação é aceita e documentada aqui.
  */
 export function BoardPage(): ReactElement {
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = useMemo(() => filtersFromSearchParams(searchParams), [searchParams]);
+  const { id: processId } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const boardContainerRef = useRef<HTMLDivElement>(null);
 
   const { data: board, isLoading, isError } = useBoard(filters);
 
@@ -49,8 +59,15 @@ export function BoardPage(): ReactElement {
     setSearchParams(params);
   }
 
+  function handleDrawerClose(): void {
+    void navigate({ pathname: '/board', search: searchParams.toString() });
+    // Foco não fica perdido no `body` ao fechar a gaveta (ver limitação
+    // documentada acima sobre não devolver o foco ao card exato).
+    boardContainerRef.current?.focus();
+  }
+
   return (
-    <div>
+    <div ref={boardContainerRef} tabIndex={-1}>
       <PageHeader title="Board" />
       <ProcessFilters filters={filters} onChange={handleFiltersChange} />
 
@@ -59,6 +76,8 @@ export function BoardPage(): ReactElement {
         <EmptyState description="Nenhuma etapa configurada." />
       )}
       {board && board.stages.length > 0 && <KanbanBoard board={board} filters={filters} />}
+
+      {processId && <ProcessDrawer processId={processId} open onClose={handleDrawerClose} />}
     </div>
   );
 }

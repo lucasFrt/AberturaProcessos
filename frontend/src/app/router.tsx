@@ -22,8 +22,9 @@ import { RequireRole } from '@/shared/components/RequireRole';
  * ficam fora do `AppLayout`; rotas protegidas entram por `RequireAuth`, e a
  * área ADMIN (dashboard/admin) tem sub-proteção por `RequireRole`.
  *
- * `/processes/:id` reaproveita `BoardPage` (a gaveta de detalhe abre por
- * cima, na Tarefa 19) para o card ficar linkável sem duplicar a tela.
+ * `/processes/:id` reaproveita `BoardPage`, que lê o `:id` via `useParams`
+ * e abre `ProcessDrawer` por cima do board (docs/12, Tarefa 19) — o card
+ * fica linkável e compartilhável sem duplicar a tela.
  */
 export function AppRouter(): ReactElement {
   return (

@@ -1,6 +1,7 @@
 import { FileOutlined } from '@ant-design/icons';
 import { Avatar, Card, Flex, Tag, Tooltip, Typography } from 'antd';
 import type { ReactElement } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import type { ProcessListItemDto } from '@/features/processes/api/process-api';
 import { maskCnpj } from '@/shared/lib/cnpj';
@@ -29,11 +30,23 @@ interface ProcessCardProps {
  * parado há muitos dias na mesma etapa.
  */
 export function ProcessCard({ process }: ProcessCardProps): ReactElement {
+  const navigate = useNavigate();
   const isStale = daysSince(process.stageChangedAt) >= STALE_STAGE_THRESHOLD_DAYS;
+
+  // Abre a gaveta de detalhe (docs/08, "Gaveta de detalhe"; docs/12,
+  // Tarefa 19). O card fica dentro do `Draggable` do dnd (que já cuida do
+  // próprio tabIndex/teclado), então o clique aqui é só navegação — sem
+  // interferir no drag-and-drop, que dispara em pointer down/move, não em
+  // click simples.
+  function handleOpen(): void {
+    void navigate(`/processes/${process.id}`);
+  }
 
   return (
     <Card
       size="small"
+      hoverable
+      onClick={handleOpen}
       style={{
         marginBottom: 8,
         borderColor: isStale ? '#faad14' : undefined,

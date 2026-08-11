@@ -14,8 +14,8 @@ import { PageHeader } from '@/shared/components/PageHeader';
  * Submissão em dois passos: `POST /processes` e, se houver arquivos,
  * `POST /processes/:id/documents`. Falha no upload NÃO desfaz o processo
  * criado — apenas avisa que os anexos precisam ser reenviados na tela de
- * detalhe (gaveta chega na Tarefa 19; por ora `/processes/:id` é o
- * placeholder de `BoardPage`).
+ * detalhe. `/processes/${'{id}'}` abre a gaveta de detalhe (`ProcessDrawer`,
+ * docs/12 Tarefa 19), onde o usuário reenvia o(s) arquivo(s) que falharam.
  */
 export function NewProcessPage(): ReactElement {
   const navigate = useNavigate();

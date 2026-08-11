@@ -138,11 +138,146 @@ export interface MoveStagePayload {
   note?: string | null;
 }
 
-/** `PATCH /processes/:id/stage` (docs/05). Devolve o detalhe do processo já na etapa nova. */
+/** `PATCH /processes/:id/stage` (docs/05). Devolve o detalhe completo do processo já na etapa nova. */
 export async function moveStage(
   processId: string,
   payload: MoveStagePayload,
-): Promise<ProcessDetailResponse> {
-  const { data } = await api.patch<ProcessDetailResponse>(`/processes/${processId}/stage`, payload);
+): Promise<ProcessDetailDto> {
+  const { data } = await api.patch<ProcessDetailDto>(`/processes/${processId}/stage`, payload);
   return data;
+}
+
+export interface ProcessPermissionsDto {
+  canEdit: boolean;
+  canMove: boolean;
+  canDelete: boolean;
+  canAssign: boolean;
+  canUploadDocument: boolean;
+}
+
+export interface ProcessDocumentDto {
+  id: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  uploadedBy: { id: string; name: string };
+  createdAt: string;
+  downloadUrl: string;
+}
+
+export interface ProcessHistoryStageRefDto {
+  id: string;
+  name: string;
+}
+
+export interface ProcessHistoryEntryDto {
+  id: string;
+  action:
+    | 'PROCESS_CREATED'
+    | 'PROCESS_UPDATED'
+    | 'STAGE_CHANGED'
+    | 'RESPONSIBLE_CHANGED'
+    | 'DOCUMENT_ADDED'
+    | 'DOCUMENT_REMOVED'
+    | 'PROCESS_DELETED';
+  fromStage: ProcessHistoryStageRefDto | null;
+  toStage: ProcessHistoryStageRefDto | null;
+  actor: { id: string; name: string };
+  description: string | null;
+  createdAt: string;
+}
+
+/** Formato completo de `GET /processes/:id` (docs/05, "Detalhe agregado para a gaveta"). */
+export interface ProcessDetailDto {
+  id: string;
+  code: string;
+  reference: string;
+  additionalInfo: string | null;
+  clientCompany: CompanySummaryDto;
+  requestingCompany: CompanySummaryDto | null;
+  currentStage: StageSummaryDto;
+  responsible: { id: string; name: string; email: string } | null;
+  createdBy: { id: string; name: string };
+  stageChangedAt: string;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  documents: ProcessDocumentDto[];
+  history: ProcessHistoryEntryDto[];
+  permissions: ProcessPermissionsDto;
+}
+
+/** `GET /processes/:id` (docs/05). Detalhe agregado usado pela gaveta (Tarefa 19). */
+export async function getProcessDetail(processId: string): Promise<ProcessDetailDto> {
+  const { data } = await api.get<ProcessDetailDto>(`/processes/${processId}`);
+  return data;
+}
+
+export interface UpdateProcessPayload {
+  reference?: string;
+  additionalInfo?: string | null;
+  clientCompanyId?: string;
+  requestingCompanyId?: string | null;
+}
+
+/** `PATCH /processes/:id` (docs/05). Usado pela edição inline da aba "Dados". */
+export async function updateProcess(
+  processId: string,
+  payload: UpdateProcessPayload,
+): Promise<ProcessDetailDto> {
+  const { data } = await api.patch<ProcessDetailDto>(`/processes/${processId}`, payload);
+  return data;
+}
+
+/** `PATCH /processes/:id/responsible` (docs/05). `responsibleId: null` desatribui. */
+export async function assignResponsible(
+  processId: string,
+  responsibleId: string | null,
+): Promise<ProcessDetailDto> {
+  const { data } = await api.patch<ProcessDetailDto>(`/processes/${processId}/responsible`, {
+    responsibleId,
+  });
+  return data;
+}
+
+interface PaginatedHistoryResponse {
+  data: ProcessHistoryEntryDto[];
+  meta: { page: number; pageSize: number; total: number; totalPages: number };
+}
+
+/** `GET /processes/:id/history` (docs/05). Trilha paginada em ordem cronológica. */
+export async function getProcessHistory(
+  processId: string,
+  params: { page?: number; pageSize?: number } = {},
+): Promise<PaginatedHistoryResponse> {
+  const { data } = await api.get<PaginatedHistoryResponse>(`/processes/${processId}/history`, {
+    params,
+  });
+  return data;
+}
+
+/**
+ * Download via `fetch` + `blob` (docs/08, "Gaveta de detalhe"): `<a>` não
+ * envia o header `Authorization`, então o binário é baixado pela própria
+ * instância axios (que já injeta o bearer token) e o download é disparado
+ * por um link temporário com `URL.createObjectURL`, revogado depois.
+ */
+export async function downloadDocument(documentId: string, originalName: string): Promise<void> {
+  const response = await api.get<Blob>(`/documents/${documentId}/download`, {
+    responseType: 'blob',
+  });
+
+  const url = URL.createObjectURL(response.data);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = originalName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/** `DELETE /documents/:id` (docs/05). Exclusão lógica. */
+export async function deleteDocument(documentId: string): Promise<void> {
+  await api.delete(`/documents/${documentId}`);
 }
