@@ -12,6 +12,7 @@ import { defaultRateLimiters } from '@/http/middlewares/rate-limit';
 import { requestContext } from '@/http/middlewares/request-context';
 import { buildAuthRouter } from '@/http/routes/auth-routes';
 import { buildCompanyRouter } from '@/http/routes/company-routes';
+import { buildDashboardRouter } from '@/http/routes/dashboard-routes';
 import { buildDocumentRouter } from '@/http/routes/document-routes';
 import { healthRouter } from '@/http/routes/health.routes';
 import { buildKanbanStageRouter } from '@/http/routes/kanban-stage-routes';
@@ -112,6 +113,10 @@ export function createApp(
   apiRouter.use(
     '/documents',
     buildDocumentRouter(container.documentController, container.authenticateDeps, rateLimiters),
+  );
+  apiRouter.use(
+    '/dashboard',
+    buildDashboardRouter(container.dashboardController, container.authenticateDeps, rateLimiters),
   );
   app.use(env.API_PREFIX, apiRouter);
 
