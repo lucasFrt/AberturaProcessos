@@ -1,4 +1,5 @@
 import { FakePasswordHasher } from '../helpers/fakes/fake-password-hasher';
+import { FakeQueueProvider } from '../helpers/fakes/fake-queue-provider';
 import { FakeTokenService } from '../helpers/fakes/fake-token-service';
 import { InMemoryCompanyRepository } from '../helpers/fakes/in-memory-company-repository';
 import { InMemoryEmailDomainRepository } from '../helpers/fakes/in-memory-email-domain-repository';
@@ -8,6 +9,7 @@ import { InMemoryUserIdentityRepository } from '../helpers/fakes/in-memory-user-
 import { InMemoryUserRepository } from '../helpers/fakes/in-memory-user-repository';
 
 import { UnauthenticatedError } from '@/domain/errors/app-error';
+import { EMAIL_JOBS } from '@/domain/queue/queue-provider';
 import { AccessScopeResolver } from '@/services/access-scope-resolver';
 import { AuthService, type AuthServiceDeps } from '@/services/auth-service';
 import { DomainProvisioningService } from '@/services/domain-provisioning-service';
@@ -18,6 +20,7 @@ function buildContext(): {
   refreshTokenRepository: InMemoryRefreshTokenRepository;
   emailDomainRepository: InMemoryEmailDomainRepository;
   organizationRepository: InMemoryOrganizationRepository;
+  queueProvider: FakeQueueProvider;
 } {
   const userRepository = new InMemoryUserRepository();
   const userIdentityRepository = new InMemoryUserIdentityRepository();
@@ -25,6 +28,7 @@ function buildContext(): {
   const organizationRepository = new InMemoryOrganizationRepository();
   const companyRepository = new InMemoryCompanyRepository();
   const emailDomainRepository = new InMemoryEmailDomainRepository();
+  const queueProvider = new FakeQueueProvider();
 
   const deps: AuthServiceDeps = {
     userRepository,
@@ -38,6 +42,7 @@ function buildContext(): {
     accessScopeResolver: new AccessScopeResolver(userRepository),
     accessTokenTtl: '15m',
     refreshTokenTtlDays: 7,
+    queueProvider,
   };
 
   return {
@@ -46,6 +51,7 @@ function buildContext(): {
     refreshTokenRepository,
     emailDomainRepository,
     organizationRepository,
+    queueProvider,
   };
 }
 
@@ -103,6 +109,25 @@ describe('AuthService', () => {
       });
 
       expect(result).toEqual({ status: 'PENDING' });
+    });
+
+    it('enfileira USER_PENDING_APPROVAL quando o domínio é desconhecido (RF-52/docs/07)', async () => {
+      const { service, queueProvider } = buildContext();
+
+      await service.register({
+        name: 'Bruno',
+        email: 'bruno@gmail.com',
+        password: 'SenhaForte1',
+        ...requestContext,
+      });
+
+      expect(queueProvider.enqueuedJobs).toHaveLength(1);
+      const job = queueProvider.enqueuedJobs[0];
+      expect(job?.name).toBe(EMAIL_JOBS.USER_PENDING_APPROVAL);
+      if (job?.name === EMAIL_JOBS.USER_PENDING_APPROVAL) {
+        expect(job.payload.userEmail).toBe('bruno@gmail.com');
+        expect(job.payload.provider).toBe('LOCAL');
+      }
     });
 
     it('cria conta PENDING quando o domínio existe mas autoApprove=false', async () => {

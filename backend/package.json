@@ -5,6 +5,7 @@
   "description": "BFF do sistema de abertura de processos de comércio exterior",
   "scripts": {
     "dev": "tsx watch src/http/server.ts",
+    "dev:worker": "tsx watch src/workers/index.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/http/server.js",
     "lint": "eslint src tests prisma --ext .ts",
@@ -27,6 +28,7 @@
   "dependencies": {
     "@prisma/client": "6.19.3",
     "bcrypt": "^6.0.0",
+    "bullmq": "6.0.11",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
@@ -36,6 +38,7 @@
     "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.3",
     "multer": "2.2.0",
+    "nodemailer": "9.0.5",
     "passport": "0.7.0",
     "passport-google-oauth20": "2.0.0",
     "passport-microsoft": "2.1.0",
@@ -54,6 +57,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "2.2.0",
     "@types/node": "^26.2.0",
+    "@types/nodemailer": "8.0.1",
     "@types/passport": "1.0.17",
     "@types/passport-google-oauth20": "2.0.17",
     "@types/passport-microsoft": "2.1.1",

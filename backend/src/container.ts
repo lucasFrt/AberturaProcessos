@@ -11,6 +11,7 @@ import { SocialAuthController } from '@/http/controllers/social-auth-controller'
 import { UserManagementController } from '@/http/controllers/user-management-controller';
 import type { AuthenticateDeps } from '@/http/middlewares/authenticate';
 import type { UploadMiddlewareConfig } from '@/http/middlewares/upload';
+import { logger } from '@/infra/logger';
 import { PrismaCompanyRepository } from '@/infra/prisma/repositories/prisma-company-repository';
 import { PrismaDocumentRepository } from '@/infra/prisma/repositories/prisma-document-repository';
 import { PrismaEmailDomainRepository } from '@/infra/prisma/repositories/prisma-email-domain-repository';
@@ -20,6 +21,8 @@ import { PrismaProcessRepository } from '@/infra/prisma/repositories/prisma-proc
 import { PrismaRefreshTokenRepository } from '@/infra/prisma/repositories/prisma-refresh-token-repository';
 import { PrismaUserIdentityRepository } from '@/infra/prisma/repositories/prisma-user-identity-repository';
 import { PrismaUserRepository } from '@/infra/prisma/repositories/prisma-user-repository';
+import { BullMqQueueProvider } from '@/infra/queue/bullmq-queue-provider';
+import { redisConnectionOptions } from '@/infra/queue/connection';
 import { BcryptPasswordHasher } from '@/infra/security/password-hasher';
 import { JwtTokenService } from '@/infra/security/token-service';
 import { LocalDiskStorage } from '@/infra/storage/local-disk-storage';
@@ -45,6 +48,7 @@ import { UserManagementService } from '@/services/user-management-service';
  */
 export interface Container {
   prisma: PrismaClient;
+  queueProvider: BullMqQueueProvider;
   authController: AuthController;
   authenticateDeps: AuthenticateDeps;
   socialAuthController: SocialAuthController;
@@ -74,6 +78,12 @@ export function buildContainer(prisma: PrismaClient): Container {
   const accessScopeResolver = new AccessScopeResolver(userRepository);
   const domainProvisioningService = new DomainProvisioningService(emailDomainRepository);
 
+  // Composição real do produtor de fila (docs/07): BullMQ sobre a mesma
+  // conexão Redis do health check. Em testes unitários, os services
+  // recebem um FakeQueueProvider em vez desta instância — nunca sobem
+  // Redis de fato (docs/09).
+  const queueProvider = new BullMqQueueProvider(redisConnectionOptions, logger);
+
   const authService = new AuthService({
     userRepository,
     userIdentityRepository,
@@ -86,6 +96,7 @@ export function buildContainer(prisma: PrismaClient): Container {
     accessScopeResolver,
     accessTokenTtl: env.JWT_ACCESS_TTL,
     refreshTokenTtlDays: env.REFRESH_TOKEN_TTL_DAYS,
+    queueProvider,
   });
 
   const tokenIssuer = new TokenIssuer({
@@ -101,6 +112,7 @@ export function buildContainer(prisma: PrismaClient): Container {
     organizationRepository,
     domainProvisioningService,
     tokenIssuer,
+    queueProvider,
   });
 
   // Registra as estratégias apenas quando há credencial configurada
@@ -132,6 +144,7 @@ export function buildContainer(prisma: PrismaClient): Container {
     companyRepository,
     stageRepository: kanbanStageRepository,
     userRepository,
+    queueProvider,
   });
 
   const storageProvider = new LocalDiskStorage(env.STORAGE_ROOT);
@@ -144,6 +157,7 @@ export function buildContainer(prisma: PrismaClient): Container {
 
   return {
     prisma,
+    queueProvider,
     authController: new AuthController(authService, organizationRepository),
     authenticateDeps,
     socialAuthController: new SocialAuthController(passport, configuredProviders),

@@ -90,6 +90,16 @@ export const envSchema = z.object({
   STORAGE_ROOT: z.string().min(1).default('./storage/uploads'),
   MAX_UPLOAD_SIZE_MB: z.coerce.number().int().positive().default(100),
   MAX_FILES_PER_REQUEST: z.coerce.number().int().positive().default(10),
+
+  // ── SMTP (docs/07, docs/10 — Mailpit local em desenvolvimento) ─
+  // Defaults apontam para o Mailpit do docker-compose (localhost:1025), que
+  // não exige autenticação — por isso SMTP_USER/SMTP_PASSWORD são opcionais.
+  SMTP_HOST: z.string().min(1).default('localhost'),
+  SMTP_PORT: z.coerce.number().int().positive().default(1025),
+  SMTP_SECURE: booleanFromEnv(false),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
+  MAIL_FROM: z.string().min(1).default('Abertura de Processos <nao-responda@opusce.com.br>'),
 });
 
 const refinedEnvSchema = envSchema.superRefine((data, ctx) => {

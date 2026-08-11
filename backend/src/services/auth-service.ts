@@ -4,6 +4,8 @@ import type { Organization } from '@/domain/entities/organization';
 import type { User } from '@/domain/entities/user';
 import { AppError, UnauthenticatedError } from '@/domain/errors/app-error';
 import { getPermissionsForRole } from '@/domain/permissions';
+import { EMAIL_JOBS } from '@/domain/queue/queue-provider';
+import type { QueueProvider } from '@/domain/queue/queue-provider';
 import type { CompanyRepository } from '@/domain/repositories/company-repository';
 import type { OrganizationRepository } from '@/domain/repositories/organization-repository';
 import type { RefreshTokenRepository } from '@/domain/repositories/refresh-token-repository';
@@ -62,6 +64,8 @@ export interface AuthServiceDeps {
   accessScopeResolver: AccessScopeResolver;
   accessTokenTtl: string;
   refreshTokenTtlDays: number;
+  /** Opcional pelo mesmo motivo de `ProcessService.queueProvider` (docs/07). */
+  queueProvider?: QueueProvider | undefined;
 }
 
 /**
@@ -110,11 +114,32 @@ export class AuthService {
     });
 
     if (!isActive) {
+      await this.enqueuePendingApprovalEmail(user);
       return { status: 'PENDING' };
     }
 
     const tokens = await this.tokenIssuer.issue(user, input);
     return { status: 'ACTIVE', user, tokens };
+  }
+
+  /** RF-52: avisa os administradores de um cadastro novo aguardando aprovação. */
+  private async enqueuePendingApprovalEmail(user: User): Promise<void> {
+    if (!this.deps.queueProvider) return;
+
+    try {
+      await this.deps.queueProvider.enqueueEmail({
+        name: EMAIL_JOBS.USER_PENDING_APPROVAL,
+        payload: {
+          userId: user.id,
+          userName: user.name,
+          userEmail: user.email,
+          provider: 'LOCAL',
+          occurredAt: new Date().toISOString(),
+        },
+      });
+    } catch {
+      // RF-51: mesma garantia de moveStage — nunca propaga.
+    }
   }
 
   async login(input: LoginInput): Promise<{ user: User; tokens: IssuedTokens }> {

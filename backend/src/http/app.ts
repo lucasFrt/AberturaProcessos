@@ -37,6 +37,10 @@ export function createApp(
   const app = express();
   const container = buildContainer(prisma);
 
+  // Exposto para o processo principal fechar o QueueProvider no shutdown
+  // ordenado (docs/07) sem precisar reconstruir o container.
+  app.set('container', container);
+
   app.set('trust proxy', 1);
   app.use(helmet());
   // credentials: true exige lista explícita de origens — nunca '*' com

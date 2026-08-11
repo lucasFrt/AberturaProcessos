@@ -17,6 +17,8 @@ import {
   ValidationError,
 } from '@/domain/errors/app-error';
 import type { Page, PaginationParams } from '@/domain/pagination';
+import { EMAIL_JOBS } from '@/domain/queue/queue-provider';
+import type { EmailJobData, QueueProvider } from '@/domain/queue/queue-provider';
 import type { CompanyRepository } from '@/domain/repositories/company-repository';
 import type { KanbanStageRepository } from '@/domain/repositories/kanban-stage-repository';
 import type { ProcessRepository } from '@/domain/repositories/process-repository';
@@ -27,6 +29,14 @@ export interface ProcessServiceDeps {
   companyRepository: CompanyRepository;
   stageRepository: KanbanStageRepository;
   userRepository: UserRepository;
+  /**
+   * Opcional para não obrigar todo teste/composição a fornecer uma fila
+   * (docs/07): quando ausente, `moveStage` simplesmente não enfileira
+   * notificação — o mesmo efeito de RF-51 (indisponibilidade não bloqueia
+   * a movimentação), só que decidido em tempo de composição em vez de
+   * runtime.
+   */
+  queueProvider?: QueueProvider | undefined;
 }
 
 export interface CreateProcessInput {
@@ -199,7 +209,7 @@ export class ProcessService {
 
     const fromStage = await this.deps.stageRepository.findById(current.currentStageId);
 
-    return this.deps.processRepository.moveStageWithHistory(id, {
+    const detail = await this.deps.processRepository.moveStageWithHistory(id, {
       fromStageId: current.currentStageId,
       toStageId: input.toStageId,
       toStageIsFinal: toStage.isFinal,
@@ -207,6 +217,53 @@ export class ProcessService {
       note: input.note ?? null,
       description: `Etapa alterada de ${fromStage?.name ?? 'desconhecida'} para ${toStage.name}.`,
     });
+
+    // Emissão pós-commit (docs/07): o enqueue só acontece DEPOIS que
+    // `moveStageWithHistory` já persistiu a mudança de etapa, nunca antes —
+    // emitir antes do commit criaria a corrida clássica de o destinatário
+    // conferir o processo e ainda encontrar o estado antigo.
+    await this.enqueueStageChangedEmail(detail, actorId, fromStage?.name ?? null, input.note);
+
+    return detail;
+  }
+
+  /**
+   * RF-51: falha ao enfileirar nunca deve propagar para quem chamou
+   * `moveStage` — `BullMqQueueProvider.enqueueEmail` já engole o próprio
+   * erro internamente (log `error`), mas este `try/catch` é uma segunda
+   * rede de segurança contra qualquer implementação de `QueueProvider`
+   * (incluindo fakes de teste) que rejeite a Promise.
+   */
+  private async enqueueStageChangedEmail(
+    detail: ProcessDetail,
+    actorId: string,
+    fromStageName: string | null,
+    note: string | null | undefined,
+  ): Promise<void> {
+    if (!this.deps.queueProvider) return;
+
+    try {
+      const actor = await this.deps.userRepository.findById(actorId);
+      const job: EmailJobData = {
+        name: EMAIL_JOBS.PROCESS_STAGE_CHANGED,
+        payload: {
+          processId: detail.id,
+          processCode: detail.code,
+          reference: detail.reference,
+          clientCompanyName: detail.clientCompany.legalName,
+          clientCompanyCnpj: detail.clientCompany.cnpj,
+          fromStageName,
+          toStageName: detail.currentStage.name,
+          actorName: actor?.name ?? 'Usuário desconhecido',
+          note: note ?? null,
+          occurredAt: detail.stageChangedAt.toISOString(),
+        },
+      };
+      await this.deps.queueProvider.enqueueEmail(job);
+    } catch {
+      // Nunca propaga: perder a notificação é aceitável (RF-51), perder a
+      // resposta de sucesso da movimentação não é.
+    }
   }
 
   /**

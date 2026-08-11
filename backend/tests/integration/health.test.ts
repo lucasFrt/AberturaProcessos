@@ -1,14 +1,17 @@
 import request from 'supertest';
 
 import { env } from '@/config/env';
+import type { Container } from '@/container';
 import { createApp } from '@/http/app';
 import { prisma } from '@/infra/prisma/client';
 import { closeSharedRedisClient } from '@/infra/queue/connection';
 
 describe('Rotas de saúde', () => {
   const app = createApp(prisma);
+  const container = app.get('container') as Container;
 
   afterAll(async () => {
+    await container.queueProvider.close();
     await closeSharedRedisClient();
     await prisma.$disconnect();
   });

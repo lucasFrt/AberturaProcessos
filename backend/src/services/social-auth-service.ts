@@ -1,6 +1,8 @@
 import type { User } from '@/domain/entities/user';
 import type { AuthProvider } from '@/domain/enums';
 import { AppError } from '@/domain/errors/app-error';
+import { EMAIL_JOBS } from '@/domain/queue/queue-provider';
+import type { QueueProvider } from '@/domain/queue/queue-provider';
 import type { OrganizationRepository } from '@/domain/repositories/organization-repository';
 import type { UserIdentityRepository } from '@/domain/repositories/user-identity-repository';
 import type { UserRepository } from '@/domain/repositories/user-repository';
@@ -26,6 +28,8 @@ export interface SocialAuthServiceDeps {
   organizationRepository: OrganizationRepository;
   domainProvisioningService: DomainProvisioningService;
   tokenIssuer: TokenIssuer;
+  /** Opcional pelo mesmo motivo de `ProcessService.queueProvider` (docs/07). */
+  queueProvider?: QueueProvider | undefined;
 }
 
 /**
@@ -115,6 +119,7 @@ export class SocialAuthService {
     // que o callback redirecione com `?status=error` em vez de mascarar
     // como pendente.
     if (user.status === 'PENDING') {
+      await this.enqueuePendingApprovalEmail(user);
       return { status: 'PENDING' };
     }
     if (user.status !== 'ACTIVE') {
@@ -123,5 +128,27 @@ export class SocialAuthService {
 
     const tokens = await this.deps.tokenIssuer.issue(user, context);
     return { status: 'ACTIVE', user, tokens };
+  }
+
+  /** RF-52: avisa os administradores de um cadastro novo aguardando aprovação. */
+  private async enqueuePendingApprovalEmail(user: User): Promise<void> {
+    if (!this.deps.queueProvider) return;
+
+    try {
+      const identity = await this.deps.userIdentityRepository.listByUserId(user.id);
+      const provider = identity[0]?.provider ?? 'LOCAL';
+      await this.deps.queueProvider.enqueueEmail({
+        name: EMAIL_JOBS.USER_PENDING_APPROVAL,
+        payload: {
+          userId: user.id,
+          userName: user.name,
+          userEmail: user.email,
+          provider,
+          occurredAt: new Date().toISOString(),
+        },
+      });
+    } catch {
+      // RF-51: nunca propaga.
+    }
   }
 }

@@ -3,7 +3,7 @@ import type { Express } from 'express';
 import request from 'supertest';
 
 import { seedBaseline } from '../helpers/seed-baseline';
-import { buildTestApp } from '../helpers/test-app';
+import { buildTestApp, closeTestQueueProviders } from '../helpers/test-app';
 import { truncateAll } from '../helpers/test-database';
 
 import { env } from '@/config/env';
@@ -98,6 +98,7 @@ describe('Etapas do Kanban — integração', () => {
 
   afterAll(async () => {
     await truncateAll(prisma);
+    await closeTestQueueProviders();
     await closeSharedRedisClient();
     await prisma.$disconnect();
   });

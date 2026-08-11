@@ -1,4 +1,5 @@
 import { env } from '@/config/env';
+import type { Container } from '@/container';
 import { createApp } from '@/http/app';
 import { logger } from '@/infra/logger';
 import { prisma } from '@/infra/prisma/client';
@@ -6,6 +7,7 @@ import { closeSharedRedisClient } from '@/infra/queue/connection';
 import { ensureStorageRootExists } from '@/infra/storage/local-disk-storage';
 
 const app = createApp(prisma);
+const container = app.get('container') as Container;
 
 let server: ReturnType<typeof app.listen>;
 
@@ -32,6 +34,7 @@ async function shutdown(signal: string): Promise<void> {
   if (server) {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+  await container.queueProvider.close();
   await closeSharedRedisClient();
   await prisma.$disconnect();
 

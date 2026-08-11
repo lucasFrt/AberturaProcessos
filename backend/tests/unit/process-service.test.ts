@@ -1,3 +1,4 @@
+import { FakeQueueProvider } from '../helpers/fakes/fake-queue-provider';
 import { InMemoryCompanyRepository } from '../helpers/fakes/in-memory-company-repository';
 import { InMemoryKanbanStageRepository } from '../helpers/fakes/in-memory-kanban-stage-repository';
 import { InMemoryProcessRepository } from '../helpers/fakes/in-memory-process-repository';
@@ -11,6 +12,7 @@ import {
   NotFoundError,
   ValidationError,
 } from '@/domain/errors/app-error';
+import { EMAIL_JOBS } from '@/domain/queue/queue-provider';
 import { ProcessService } from '@/services/process-service';
 
 const ALL_SCOPE: AccessScope = { kind: 'ALL' };
@@ -21,18 +23,28 @@ function buildContext(): {
   companyRepository: InMemoryCompanyRepository;
   stageRepository: InMemoryKanbanStageRepository;
   userRepository: InMemoryUserRepository;
+  queueProvider: FakeQueueProvider;
 } {
   const processRepository = new InMemoryProcessRepository();
   const companyRepository = new InMemoryCompanyRepository();
   const stageRepository = new InMemoryKanbanStageRepository();
   const userRepository = new InMemoryUserRepository();
+  const queueProvider = new FakeQueueProvider();
   const service = new ProcessService({
     processRepository,
     companyRepository,
     stageRepository,
     userRepository,
+    queueProvider,
   });
-  return { service, processRepository, companyRepository, stageRepository, userRepository };
+  return {
+    service,
+    processRepository,
+    companyRepository,
+    stageRepository,
+    userRepository,
+    queueProvider,
+  };
 }
 
 function pushCompany(
@@ -469,6 +481,85 @@ describe('ProcessService', () => {
       const detail = await service.findDetailById(created.id, ALL_SCOPE);
       expect(detail.currentStage.id).not.toBe(andamentoId);
       expect(detail.history.some((h) => h.action === 'STAGE_CHANGED')).toBe(false);
+    });
+
+    it('enfileira PROCESS_STAGE_CHANGED com fromStage, toStage, actor e note (RF-50/docs/07)', async () => {
+      const {
+        service,
+        companyRepository,
+        processRepository,
+        stageRepository,
+        userRepository,
+        queueProvider,
+      } = buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      const andamentoId = await pushStage(stageRepository, processRepository, 'Em Andamento', 1);
+      await userRepository.create({
+        name: 'Maria',
+        email: 'maria@x.com',
+        passwordHash: null,
+        role: 'OPERATIONAL',
+        status: 'ACTIVE',
+        accessScope: 'ORGANIZATION',
+        organizationId: 'org-1',
+      });
+      const actor = await userRepository.findByEmail('maria@x.com');
+      processRepository.users.push({ id: actor!.id, name: actor!.name, email: actor!.email });
+
+      const created = await service.create(actor!.id, ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Processo com e-mail',
+      });
+
+      await service.moveStage(created.id, actor!.id, ALL_SCOPE, {
+        toStageId: andamentoId,
+        note: 'Aguardando documentação adicional',
+      });
+
+      expect(queueProvider.enqueuedJobs).toHaveLength(1);
+      const job = queueProvider.enqueuedJobs[0];
+      expect(job?.name).toBe(EMAIL_JOBS.PROCESS_STAGE_CHANGED);
+      if (job?.name === EMAIL_JOBS.PROCESS_STAGE_CHANGED) {
+        expect(job.payload.fromStageName).toBe('Entrada');
+        expect(job.payload.toStageName).toBe('Em Andamento');
+        expect(job.payload.actorName).toBe('Maria');
+        expect(job.payload.note).toBe('Aguardando documentação adicional');
+        expect(job.payload.processId).toBe(created.id);
+      }
+    });
+
+    it('RF-51: falha simulada no enqueue não impede a resposta de sucesso de moveStage', async () => {
+      const { service, companyRepository, processRepository, stageRepository, queueProvider } =
+        buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      const andamentoId = await pushStage(stageRepository, processRepository, 'Em Andamento', 1);
+      processRepository.users.push({ id: 'user-1', name: 'Maria', email: 'maria@x.com' });
+
+      const created = await service.create('user-1', ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Processo',
+      });
+
+      queueProvider.shouldFailEnqueue = true;
+
+      const moved = await service.moveStage(created.id, 'user-1', ALL_SCOPE, {
+        toStageId: andamentoId,
+      });
+
+      expect(moved.currentStage.id).toBe(andamentoId);
+      expect(queueProvider.enqueuedJobs).toHaveLength(0);
     });
   });
 
