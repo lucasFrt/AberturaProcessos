@@ -9,7 +9,7 @@ import {
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { Avatar, Button, Flex, Layout, Menu, Typography } from 'antd';
+import { Avatar, Button, Flex, Layout, Menu, Tag, Typography } from 'antd';
 import type { MenuProps } from 'antd';
 import type { ReactElement } from 'react';
 import { useMemo } from 'react';
@@ -17,6 +17,7 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 
 import { logout as logoutRequest } from '@/features/auth/api/auth-api';
 import { useAuthStore } from '@/features/auth/store/auth-store';
+import { useSocketStatus } from '@/shared/hooks/useSocketStatus';
 
 const { Header, Sider, Content } = Layout;
 
@@ -90,6 +91,7 @@ export function AppLayout(): ReactElement {
   const location = useLocation();
   const navigate = useNavigate();
   const items = useMenuItems();
+  const { isConnected } = useSocketStatus();
 
   async function handleLogout(): Promise<void> {
     try {
@@ -113,6 +115,11 @@ export function AppLayout(): ReactElement {
       <Layout>
         <Header style={{ background: '#fff', padding: '0 16px' }}>
           <Flex align="center" justify="flex-end" gap={12} style={{ height: '100%' }}>
+            {!isConnected && (
+              <Tag color="warning" role="status" aria-live="polite">
+                Conexão em tempo real perdida
+              </Tag>
+            )}
             <Avatar icon={<UserOutlined />} />
             <Typography.Text>{user?.name}</Typography.Text>
             <Button
