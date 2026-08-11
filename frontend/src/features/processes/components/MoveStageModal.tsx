@@ -33,7 +33,7 @@ export function MoveStageModal({
 
   const { data: stages, isLoading } = useQuery({
     queryKey: ['stages'],
-    queryFn: listStages,
+    queryFn: () => listStages(),
     enabled: open,
   });
 
