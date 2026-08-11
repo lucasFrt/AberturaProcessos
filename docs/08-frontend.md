@@ -185,7 +185,7 @@ O entry point. Campos, na ordem do formulário:
 
 | Campo | Componente | Regras |
 | --- | --- | --- |
-| CNPJ Cliente | `Select` com busca (`GET /companies?q=`) | Obrigatório. CLIENT vê apenas os CNPJs do seu escopo; se houver só um, vem pré-selecionado. |
+| CNPJ Cliente | `Select` com busca | Obrigatório. `GET /companies` é restrito a ADMIN no backend (docs/05); CLIENT usa a lista `companies` já devolvida por `/auth/me` (seu próprio escopo), filtrada localmente. OPERATIONAL/ADMIN buscam via `GET /companies?q=`. Se o CLIENT tiver só um CNPJ, vem pré-selecionado. |
 | CNPJ Solicitante | `Select` com busca, opcional | Aparece atrás de "Este processo foi solicitado por outra empresa?" para não poluir o caso comum. |
 | Referência | `Input` | Obrigatório, 3–255 caracteres. |
 | Adicionais | `TextArea` (6 linhas, contador) | Opcional, até 10.000 caracteres. |
