@@ -1,3 +1,4 @@
+import { FakeRealtimeProvider } from '../helpers/fakes/fake-realtime-provider';
 import { InMemoryKanbanStageRepository } from '../helpers/fakes/in-memory-kanban-stage-repository';
 
 import { ConflictError, NotFoundError, ValidationError } from '@/domain/errors/app-error';
@@ -6,10 +7,12 @@ import { KanbanStageService } from '@/services/kanban-stage-service';
 function buildContext(): {
   service: KanbanStageService;
   stageRepository: InMemoryKanbanStageRepository;
+  realtimeProvider: FakeRealtimeProvider;
 } {
   const stageRepository = new InMemoryKanbanStageRepository();
-  const service = new KanbanStageService({ stageRepository });
-  return { service, stageRepository };
+  const realtimeProvider = new FakeRealtimeProvider();
+  const service = new KanbanStageService({ stageRepository, realtimeProvider });
+  return { service, stageRepository, realtimeProvider };
 }
 
 describe('KanbanStageService', () => {
@@ -37,6 +40,14 @@ describe('KanbanStageService', () => {
       await service.create({ name: 'Entrada' });
 
       await expect(service.create({ name: 'Entrada' })).rejects.toBeInstanceOf(ConflictError);
+    });
+
+    it('emite stages:changed pós-commit (docs/05)', async () => {
+      const { service, realtimeProvider } = buildContext();
+
+      await service.create({ name: 'Entrada' });
+
+      expect(realtimeProvider.stagesChangedCount).toBe(1);
     });
   });
 
@@ -76,6 +87,16 @@ describe('KanbanStageService', () => {
         NotFoundError,
       );
     });
+
+    it('emite stages:changed pós-commit ao atualizar', async () => {
+      const { service, realtimeProvider } = buildContext();
+      const stage = await service.create({ name: 'Entrada' });
+      realtimeProvider.stagesChangedCount = 0;
+
+      await service.update(stage.id, { name: 'Nova Entrada' });
+
+      expect(realtimeProvider.stagesChangedCount).toBe(1);
+    });
   });
 
   describe('delete', () => {
@@ -110,6 +131,17 @@ describe('KanbanStageService', () => {
         code: 'CONFLICT',
         status: 409,
       });
+    });
+
+    it('emite stages:changed pós-commit ao excluir', async () => {
+      const { service, realtimeProvider } = buildContext();
+      const first = await service.create({ name: 'Entrada' });
+      await service.create({ name: 'Em Andamento' });
+      realtimeProvider.stagesChangedCount = 0;
+
+      await service.delete(first.id);
+
+      expect(realtimeProvider.stagesChangedCount).toBe(1);
     });
   });
 
@@ -152,6 +184,17 @@ describe('KanbanStageService', () => {
       await expect(service.reorder([first.id, second.id, 'nao-existe'])).rejects.toBeInstanceOf(
         ValidationError,
       );
+    });
+
+    it('emite stages:changed pós-commit ao reordenar', async () => {
+      const { service, realtimeProvider } = buildContext();
+      const first = await service.create({ name: 'Entrada' });
+      const second = await service.create({ name: 'Em Andamento' });
+      realtimeProvider.stagesChangedCount = 0;
+
+      await service.reorder([second.id, first.id]);
+
+      expect(realtimeProvider.stagesChangedCount).toBe(1);
     });
   });
 

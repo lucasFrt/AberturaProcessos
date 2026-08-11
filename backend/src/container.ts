@@ -23,6 +23,7 @@ import { PrismaUserIdentityRepository } from '@/infra/prisma/repositories/prisma
 import { PrismaUserRepository } from '@/infra/prisma/repositories/prisma-user-repository';
 import { BullMqQueueProvider } from '@/infra/queue/bullmq-queue-provider';
 import { redisConnectionOptions } from '@/infra/queue/connection';
+import { DeferredRealtimeProvider } from '@/infra/realtime/deferred-realtime-provider';
 import { BcryptPasswordHasher } from '@/infra/security/password-hasher';
 import { JwtTokenService } from '@/infra/security/token-service';
 import { LocalDiskStorage } from '@/infra/storage/local-disk-storage';
@@ -49,6 +50,16 @@ import { UserManagementService } from '@/services/user-management-service';
 export interface Container {
   prisma: PrismaClient;
   queueProvider: BullMqQueueProvider;
+  /**
+   * Desvio do padrão de `QueueProvider` (docs/07), documentado em
+   * `infra/realtime/deferred-realtime-provider.ts`: `SocketIoProvider`
+   * precisa do `http.Server`, que só existe depois de `app.listen()` —
+   * ou seja, depois que este container e os services já foram montados.
+   * `http/server.ts` chama `realtimeProvider.attach(...)` assim que o
+   * servidor sobe. Em testes de integração, nada é anexado — o delegate
+   * interno permanece no-op.
+   */
+  realtimeProvider: DeferredRealtimeProvider;
   authController: AuthController;
   authenticateDeps: AuthenticateDeps;
   socialAuthController: SocialAuthController;
@@ -83,6 +94,12 @@ export function buildContainer(prisma: PrismaClient): Container {
   // recebem um FakeQueueProvider em vez desta instância — nunca sobem
   // Redis de fato (docs/09).
   const queueProvider = new BullMqQueueProvider(redisConnectionOptions, logger);
+
+  // Composição do provedor de tempo real (docs/07, RF-53/RF-54). Ver
+  // comentário em `Container.realtimeProvider` e em
+  // `infra/realtime/deferred-realtime-provider.ts` sobre o motivo do
+  // desvio do padrão de `QueueProvider`.
+  const realtimeProvider = new DeferredRealtimeProvider();
 
   const authService = new AuthService({
     userRepository,
@@ -137,7 +154,10 @@ export function buildContainer(prisma: PrismaClient): Container {
     refreshTokenRepository,
   });
 
-  const kanbanStageService = new KanbanStageService({ stageRepository: kanbanStageRepository });
+  const kanbanStageService = new KanbanStageService({
+    stageRepository: kanbanStageRepository,
+    realtimeProvider,
+  });
 
   const processService = new ProcessService({
     processRepository,
@@ -145,6 +165,7 @@ export function buildContainer(prisma: PrismaClient): Container {
     stageRepository: kanbanStageRepository,
     userRepository,
     queueProvider,
+    realtimeProvider,
   });
 
   const storageProvider = new LocalDiskStorage(env.STORAGE_ROOT);
@@ -153,11 +174,13 @@ export function buildContainer(prisma: PrismaClient): Container {
     processRepository,
     storageProvider,
     maxFilesPerRequest: env.MAX_FILES_PER_REQUEST,
+    realtimeProvider,
   });
 
   return {
     prisma,
     queueProvider,
+    realtimeProvider,
     authController: new AuthController(authService, organizationRepository),
     authenticateDeps,
     socialAuthController: new SocialAuthController(passport, configuredProviders),

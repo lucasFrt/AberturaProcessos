@@ -10,6 +10,7 @@ import type {
   ProcessUpdateDiffEntry,
   UpdateProcessData,
 } from '@/domain/entities/process';
+import { toProcessListItem } from '@/domain/entities/process';
 import {
   ConflictError,
   ForbiddenError,
@@ -19,6 +20,7 @@ import {
 import type { Page, PaginationParams } from '@/domain/pagination';
 import { EMAIL_JOBS } from '@/domain/queue/queue-provider';
 import type { EmailJobData, QueueProvider } from '@/domain/queue/queue-provider';
+import type { RealtimeProvider } from '@/domain/realtime/realtime-provider';
 import type { CompanyRepository } from '@/domain/repositories/company-repository';
 import type { KanbanStageRepository } from '@/domain/repositories/kanban-stage-repository';
 import type { ProcessRepository } from '@/domain/repositories/process-repository';
@@ -37,6 +39,13 @@ export interface ProcessServiceDeps {
    * runtime.
    */
   queueProvider?: QueueProvider | undefined;
+  /**
+   * Opcional pelo mesmo motivo de `queueProvider` (docs/07): quando
+   * ausente (ex.: testes que não verificam tempo real), os métodos
+   * simplesmente não emitem evento — nenhum comportamento de negócio
+   * depende da emissão ter ocorrido.
+   */
+  realtimeProvider?: RealtimeProvider | undefined;
 }
 
 export interface CreateProcessInput {
@@ -101,7 +110,7 @@ export class ProcessService {
       throw new ValidationError('Não há etapas do Kanban cadastradas.');
     }
 
-    return this.deps.processRepository.createWithHistory({
+    const detail = await this.deps.processRepository.createWithHistory({
       reference: input.reference,
       additionalInfo: input.additionalInfo ?? null,
       clientCompanyId: input.clientCompanyId,
@@ -109,6 +118,18 @@ export class ProcessService {
       currentStageId: firstStage.id,
       createdById: actorId,
     });
+
+    // Emissão pós-commit (docs/07): só depois que `createWithHistory` já
+    // persistiu o processo, nunca antes.
+    this.deps.realtimeProvider?.emitProcessEvent(
+      { name: 'process:created', payload: { process: toProcessListItem(detail) } },
+      {
+        clientCompanyId: detail.clientCompany.id,
+        requestingCompanyId: detail.requestingCompany?.id ?? null,
+      },
+    );
+
+    return detail;
   }
 
   async list(
@@ -173,12 +194,23 @@ export class ProcessService {
       return this.findDetailById(id, scope);
     }
 
-    return this.deps.processRepository.updateWithHistory(id, {
+    const detail = await this.deps.processRepository.updateWithHistory(id, {
       data,
       actorId,
       description: `Processo atualizado: ${diff.map((entry) => entry.field).join(', ')}.`,
       diff,
     });
+
+    // Emissão pós-commit (docs/07).
+    this.deps.realtimeProvider?.emitProcessEvent(
+      { name: 'process:updated', payload: { processId: detail.id } },
+      {
+        clientCompanyId: detail.clientCompany.id,
+        requestingCompanyId: detail.requestingCompany?.id ?? null,
+      },
+    );
+
+    return detail;
   }
 
   /**
@@ -218,11 +250,29 @@ export class ProcessService {
       description: `Etapa alterada de ${fromStage?.name ?? 'desconhecida'} para ${toStage.name}.`,
     });
 
-    // Emissão pós-commit (docs/07): o enqueue só acontece DEPOIS que
-    // `moveStageWithHistory` já persistiu a mudança de etapa, nunca antes —
-    // emitir antes do commit criaria a corrida clássica de o destinatário
-    // conferir o processo e ainda encontrar o estado antigo.
+    // Emissão pós-commit (docs/07): o enqueue e o emit só acontecem DEPOIS
+    // que `moveStageWithHistory` já persistiu a mudança de etapa, nunca
+    // antes — emitir antes do commit criaria a corrida clássica de o
+    // destinatário conferir o processo e ainda encontrar o estado antigo.
     await this.enqueueStageChangedEmail(detail, actorId, fromStage?.name ?? null, input.note);
+
+    const actor = await this.deps.userRepository.findById(actorId);
+    this.deps.realtimeProvider?.emitProcessEvent(
+      {
+        name: 'process:moved',
+        payload: {
+          processId: detail.id,
+          fromStageId: current.currentStageId,
+          toStageId: input.toStageId,
+          actor: { id: actorId, name: actor?.name ?? 'Usuário desconhecido' },
+          at: detail.stageChangedAt.toISOString(),
+        },
+      },
+      {
+        clientCompanyId: detail.clientCompany.id,
+        requestingCompanyId: detail.requestingCompany?.id ?? null,
+      },
+    );
 
     return detail;
   }
@@ -300,11 +350,22 @@ export class ProcessService {
       description = `Responsável definido: ${responsible.name}.`;
     }
 
-    return this.deps.processRepository.assignResponsibleWithHistory(id, {
+    const detail = await this.deps.processRepository.assignResponsibleWithHistory(id, {
       responsibleId,
       actorId,
       description,
     });
+
+    // Emissão pós-commit (docs/07): troca de responsável emite process:updated (docs/05).
+    this.deps.realtimeProvider?.emitProcessEvent(
+      { name: 'process:updated', payload: { processId: detail.id } },
+      {
+        clientCompanyId: detail.clientCompany.id,
+        requestingCompanyId: detail.requestingCompany?.id ?? null,
+      },
+    );
+
+    return detail;
   }
 
   /** Exclusão lógica (RF-28; docs/05, `DELETE /processes/:id`). */
@@ -318,6 +379,15 @@ export class ProcessService {
       actorId,
       description: `Processo ${current.code} excluído.`,
     });
+
+    // Emissão pós-commit (docs/07).
+    this.deps.realtimeProvider?.emitProcessEvent(
+      { name: 'process:deleted', payload: { processId: id } },
+      {
+        clientCompanyId: current.clientCompanyId,
+        requestingCompanyId: current.requestingCompanyId,
+      },
+    );
   }
 
   /**

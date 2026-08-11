@@ -107,6 +107,30 @@ export interface ProcessBoardStageResult {
   processes: ProcessListItem[];
 }
 
+/**
+ * Reduz o detalhe agregado para o formato de item de listagem (docs/05,
+ * payload de `process:created` — "`{ process: <item de listagem> }`").
+ * Usado apenas na emissão do evento de tempo real, para não precisar de
+ * uma segunda ida ao repositório só para montar o payload.
+ */
+export function toProcessListItem(detail: ProcessDetail): ProcessListItem {
+  return {
+    id: detail.id,
+    code: detail.code,
+    reference: detail.reference,
+    clientCompany: detail.clientCompany,
+    requestingCompany: detail.requestingCompany,
+    currentStage: detail.currentStage,
+    responsible: detail.responsible
+      ? { id: detail.responsible.id, name: detail.responsible.name }
+      : null,
+    documentCount: detail.documents.length,
+    stageChangedAt: detail.stageChangedAt,
+    completedAt: detail.completedAt,
+    createdAt: detail.createdAt,
+  };
+}
+
 export interface CreateProcessWithHistoryInput {
   reference: string;
   additionalInfo: string | null;

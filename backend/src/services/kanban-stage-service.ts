@@ -5,6 +5,7 @@ import type {
   UpdateKanbanStageData,
 } from '@/domain/entities/kanban-stage';
 import { ConflictError, NotFoundError, ValidationError } from '@/domain/errors/app-error';
+import type { RealtimeProvider } from '@/domain/realtime/realtime-provider';
 import type {
   KanbanStageRepository,
   KanbanStageWithCount,
@@ -12,6 +13,8 @@ import type {
 
 export interface KanbanStageServiceDeps {
   stageRepository: KanbanStageRepository;
+  /** Opcional pelo mesmo motivo de `QueueProvider` (docs/07) — ver process-service.ts. */
+  realtimeProvider?: RealtimeProvider | undefined;
 }
 
 /**
@@ -49,7 +52,12 @@ export class KanbanStageService {
     const maxOrder = await this.deps.stageRepository.findMaxOrder();
     const order = maxOrder === null ? 0 : maxOrder + 1;
 
-    return this.deps.stageRepository.create({ ...data, order });
+    const stage = await this.deps.stageRepository.create({ ...data, order });
+
+    // Emissão pós-commit (docs/07): qualquer escrita em /stages emite stages:changed (docs/05).
+    this.deps.realtimeProvider?.emitStagesChanged();
+
+    return stage;
   }
 
   async update(id: string, data: UpdateKanbanStageData): Promise<KanbanStage> {
@@ -62,7 +70,11 @@ export class KanbanStageService {
       }
     }
 
-    return this.deps.stageRepository.update(id, data);
+    const stage = await this.deps.stageRepository.update(id, data);
+
+    this.deps.realtimeProvider?.emitStagesChanged();
+
+    return stage;
   }
 
   /**
@@ -88,6 +100,8 @@ export class KanbanStageService {
     }
 
     await this.deps.stageRepository.delete(id);
+
+    this.deps.realtimeProvider?.emitStagesChanged();
   }
 
   /**
@@ -108,6 +122,10 @@ export class KanbanStageService {
       throw new ValidationError('A lista precisa conter todos os ids de etapas existentes.');
     }
 
-    return this.deps.stageRepository.reorder(stageIds);
+    const stages = await this.deps.stageRepository.reorder(stageIds);
+
+    this.deps.realtimeProvider?.emitStagesChanged();
+
+    return stages;
   }
 }

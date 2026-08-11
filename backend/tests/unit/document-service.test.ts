@@ -1,3 +1,4 @@
+import { FakeRealtimeProvider } from '../helpers/fakes/fake-realtime-provider';
 import { FakeStorageProvider } from '../helpers/fakes/fake-storage-provider';
 import { InMemoryDocumentRepository } from '../helpers/fakes/in-memory-document-repository';
 import { InMemoryProcessRepository } from '../helpers/fakes/in-memory-process-repository';
@@ -13,17 +14,20 @@ function buildContext(maxFilesPerRequest = 10): {
   documentRepository: InMemoryDocumentRepository;
   processRepository: InMemoryProcessRepository;
   storageProvider: FakeStorageProvider;
+  realtimeProvider: FakeRealtimeProvider;
 } {
   const documentRepository = new InMemoryDocumentRepository();
   const processRepository = new InMemoryProcessRepository();
   const storageProvider = new FakeStorageProvider();
+  const realtimeProvider = new FakeRealtimeProvider();
   const service = new DocumentService({
     documentRepository,
     processRepository,
     storageProvider,
     maxFilesPerRequest,
+    realtimeProvider,
   });
-  return { service, documentRepository, processRepository, storageProvider };
+  return { service, documentRepository, processRepository, storageProvider, realtimeProvider };
 }
 
 function pushProcess(
@@ -113,6 +117,24 @@ describe('DocumentService', () => {
       await expect(service.upload('process-1', 'user-1', ALL_SCOPE, [])).rejects.toBeInstanceOf(
         ValidationError,
       );
+    });
+
+    it('emite process:updated pós-commit ao fazer upload (docs/05)', async () => {
+      const { service, processRepository, documentRepository, realtimeProvider } = buildContext();
+      pushProcess(processRepository, documentRepository, 'process-1', 'company-1');
+      documentRepository.users.push({ id: 'user-1', name: 'Maria' });
+
+      await service.upload('process-1', 'user-1', ALL_SCOPE, [
+        { originalName: 'doc.pdf', mimeType: 'application/pdf', buffer: Buffer.from('x') },
+      ]);
+
+      expect(realtimeProvider.processEvents).toHaveLength(1);
+      const emitted = realtimeProvider.processEvents[0];
+      expect(emitted?.event.name).toBe('process:updated');
+      if (emitted?.event.name === 'process:updated') {
+        expect(emitted.event.payload.processId).toBe('process-1');
+      }
+      expect(emitted?.target).toEqual({ clientCompanyId: 'company-1', requestingCompanyId: null });
     });
 
     it('rejeita quando excede MAX_FILES_PER_REQUEST', async () => {
@@ -214,6 +236,22 @@ describe('DocumentService', () => {
       await expect(
         service.softDelete('nao-existe', 'user-1', 'ADMIN', ALL_SCOPE),
       ).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it('emite process:updated pós-commit ao excluir documento (docs/05)', async () => {
+      const { service, processRepository, documentRepository, realtimeProvider } = buildContext();
+      pushProcess(processRepository, documentRepository, 'process-1', 'company-1');
+      documentRepository.users.push({ id: 'client-a', name: 'Cliente A' });
+
+      const [uploaded] = await service.upload('process-1', 'client-a', ALL_SCOPE, [
+        { originalName: 'doc.pdf', mimeType: 'application/pdf', buffer: Buffer.from('x') },
+      ]);
+      realtimeProvider.processEvents.length = 0; // limpa o evento do upload
+
+      await service.softDelete(uploaded!.id, 'operational-1', 'OPERATIONAL', ALL_SCOPE);
+
+      expect(realtimeProvider.processEvents).toHaveLength(1);
+      expect(realtimeProvider.processEvents[0]?.event.name).toBe('process:updated');
     });
   });
 });

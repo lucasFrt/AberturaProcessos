@@ -1,4 +1,5 @@
 import { FakeQueueProvider } from '../helpers/fakes/fake-queue-provider';
+import { FakeRealtimeProvider } from '../helpers/fakes/fake-realtime-provider';
 import { InMemoryCompanyRepository } from '../helpers/fakes/in-memory-company-repository';
 import { InMemoryKanbanStageRepository } from '../helpers/fakes/in-memory-kanban-stage-repository';
 import { InMemoryProcessRepository } from '../helpers/fakes/in-memory-process-repository';
@@ -24,18 +25,21 @@ function buildContext(): {
   stageRepository: InMemoryKanbanStageRepository;
   userRepository: InMemoryUserRepository;
   queueProvider: FakeQueueProvider;
+  realtimeProvider: FakeRealtimeProvider;
 } {
   const processRepository = new InMemoryProcessRepository();
   const companyRepository = new InMemoryCompanyRepository();
   const stageRepository = new InMemoryKanbanStageRepository();
   const userRepository = new InMemoryUserRepository();
   const queueProvider = new FakeQueueProvider();
+  const realtimeProvider = new FakeRealtimeProvider();
   const service = new ProcessService({
     processRepository,
     companyRepository,
     stageRepository,
     userRepository,
     queueProvider,
+    realtimeProvider,
   });
   return {
     service,
@@ -44,6 +48,7 @@ function buildContext(): {
     stageRepository,
     userRepository,
     queueProvider,
+    realtimeProvider,
   };
 }
 
@@ -155,6 +160,32 @@ describe('ProcessService', () => {
           reference: 'Processo fora do escopo',
         }),
       ).rejects.toBeInstanceOf(ForbiddenError);
+    });
+
+    it('emite process:created pós-commit com as salas resolvidas (docs/07)', async () => {
+      const { service, companyRepository, processRepository, stageRepository, realtimeProvider } =
+        buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      processRepository.users.push({ id: 'user-1', name: 'Maria', email: 'maria@x.com' });
+
+      const detail = await service.create('user-1', ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Processo com evento',
+      });
+
+      expect(realtimeProvider.processEvents).toHaveLength(1);
+      const emitted = realtimeProvider.processEvents[0];
+      expect(emitted?.event.name).toBe('process:created');
+      expect(emitted?.target).toEqual({ clientCompanyId: company.id, requestingCompanyId: null });
+      if (emitted?.event.name === 'process:created') {
+        expect(emitted.event.payload.process.id).toBe(detail.id);
+      }
     });
 
     it('permite CLIENT criar processo quando o CNPJ está no escopo', async () => {
@@ -306,6 +337,32 @@ describe('ProcessService', () => {
       await expect(
         service.update(created.id, 'user-1', otherScope, { reference: 'Nova referência' }),
       ).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it('emite process:updated pós-commit ao editar o processo', async () => {
+      const { service, companyRepository, processRepository, stageRepository, realtimeProvider } =
+        buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      processRepository.users.push({ id: 'user-1', name: 'Maria', email: 'maria@x.com' });
+
+      const created = await service.create('user-1', ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Referência original',
+      });
+      realtimeProvider.processEvents.length = 0; // limpa o evento de create
+
+      await service.update(created.id, 'user-1', ALL_SCOPE, {
+        reference: 'Referência atualizada',
+      });
+
+      expect(realtimeProvider.processEvents).toHaveLength(1);
+      expect(realtimeProvider.processEvents[0]?.event.name).toBe('process:updated');
     });
 
     it('rejeita mover para CNPJ fora do escopo do CLIENT', async () => {
@@ -561,6 +618,55 @@ describe('ProcessService', () => {
       expect(moved.currentStage.id).toBe(andamentoId);
       expect(queueProvider.enqueuedJobs).toHaveLength(0);
     });
+
+    it('emite process:moved pós-commit com fromStageId, toStageId, actor e at (docs/05)', async () => {
+      const {
+        service,
+        companyRepository,
+        processRepository,
+        stageRepository,
+        userRepository,
+        realtimeProvider,
+      } = buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      const entradaId = await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      const andamentoId = await pushStage(stageRepository, processRepository, 'Em Andamento', 1);
+      const actor = await userRepository.create({
+        name: 'Maria',
+        email: 'maria@x.com',
+        passwordHash: null,
+        role: 'OPERATIONAL',
+        status: 'ACTIVE',
+        accessScope: 'ORGANIZATION',
+        organizationId: 'org-1',
+      });
+      processRepository.users.push({ id: actor.id, name: actor.name, email: actor.email });
+
+      const created = await service.create(actor.id, ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Processo com evento de movimentação',
+      });
+      realtimeProvider.processEvents.length = 0;
+
+      await service.moveStage(created.id, actor.id, ALL_SCOPE, { toStageId: andamentoId });
+
+      expect(realtimeProvider.processEvents).toHaveLength(1);
+      const emitted = realtimeProvider.processEvents[0];
+      expect(emitted?.event.name).toBe('process:moved');
+      if (emitted?.event.name === 'process:moved') {
+        expect(emitted.event.payload.processId).toBe(created.id);
+        expect(emitted.event.payload.fromStageId).toBe(entradaId);
+        expect(emitted.event.payload.toStageId).toBe(andamentoId);
+        expect(emitted.event.payload.actor.id).toBe(actor.id);
+        expect(emitted.event.payload.actor.name).toBe('Maria');
+        expect(typeof emitted.event.payload.at).toBe('string');
+      }
+    });
   });
 
   describe('assignResponsible', () => {
@@ -604,6 +710,50 @@ describe('ProcessService', () => {
 
       expect(updated.responsible?.id).toBe(operational.id);
       expect(updated.history.some((h) => h.action === 'RESPONSIBLE_CHANGED')).toBe(true);
+    });
+
+    it('emite process:updated pós-commit ao definir responsável', async () => {
+      const {
+        service,
+        companyRepository,
+        processRepository,
+        stageRepository,
+        userRepository,
+        realtimeProvider,
+      } = buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      processRepository.users.push({ id: 'user-1', name: 'Maria', email: 'maria@x.com' });
+      const operational = await userRepository.create({
+        name: 'Carlos Souza',
+        email: 'carlos@opusce.com.br',
+        passwordHash: null,
+        role: 'OPERATIONAL',
+        status: 'ACTIVE',
+        accessScope: 'ORGANIZATION',
+        organizationId: 'org-1',
+      });
+      processRepository.users.push({
+        id: operational.id,
+        name: operational.name,
+        email: operational.email,
+      });
+
+      const created = await service.create('user-1', ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Processo',
+      });
+      realtimeProvider.processEvents.length = 0;
+
+      await service.assignResponsible(created.id, 'user-1', ALL_SCOPE, operational.id);
+
+      expect(realtimeProvider.processEvents).toHaveLength(1);
+      expect(realtimeProvider.processEvents[0]?.event.name).toBe('process:updated');
     });
 
     it('atribuir CLIENT como responsável responde 400 VALIDATION_ERROR', async () => {
@@ -699,6 +849,34 @@ describe('ProcessService', () => {
 
       const history = await service.listHistory(created.id, ALL_SCOPE, { page: 1, pageSize: 20 });
       expect(history.items.some((h) => h.action === 'PROCESS_DELETED')).toBe(true);
+    });
+
+    it('emite process:deleted pós-commit', async () => {
+      const { service, companyRepository, processRepository, stageRepository, realtimeProvider } =
+        buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      processRepository.users.push({ id: 'user-1', name: 'Maria', email: 'maria@x.com' });
+
+      const created = await service.create('user-1', ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'Processo a excluir',
+      });
+      realtimeProvider.processEvents.length = 0;
+
+      await service.softDelete(created.id, 'user-1', ALL_SCOPE);
+
+      expect(realtimeProvider.processEvents).toHaveLength(1);
+      const emitted = realtimeProvider.processEvents[0];
+      expect(emitted?.event.name).toBe('process:deleted');
+      if (emitted?.event.name === 'process:deleted') {
+        expect(emitted.event.payload.processId).toBe(created.id);
+      }
     });
 
     it('processo fora do escopo responde 404 ao excluir', async () => {
