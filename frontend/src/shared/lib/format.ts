@@ -31,6 +31,18 @@ export function formatRelativeTime(isoValue: string | Date): string {
   return dayjs(isoValue).tz(TIME_ZONE).fromNow();
 }
 
+/**
+ * `2026-08-05` (data pura, sem hora, ex.: `throughputByDay[].date` do
+ * dashboard) -> `05/08/2026`. Reformata a string diretamente, sem passar
+ * por `dayjs`/`.tz()`: uma data sem componente de hora seria interpretada
+ * como meia-noite UTC e, ao converter para `America/Sao_Paulo` (UTC-3),
+ * exibiria o dia anterior — o bug clássico de "off by one day".
+ */
+export function formatDateOnly(isoDateOnly: string): string {
+  const [year, month, day] = isoDateOnly.split('-');
+  return `${day}/${month}/${year}`;
+}
+
 /** Tamanho de arquivo legível, ex.: `184.3 KB`. */
 export function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B';
