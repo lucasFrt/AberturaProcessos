@@ -19,7 +19,11 @@ TypeScript/Express, frontend em React, ambos em `backend/` e `frontend/` na raiz
 3. Antes de implementar a tarefa N, leia os documentos que ela referencia (campo **Refs** de cada
    tarefa). Normalmente são 2-3 documentos específicos, não todos os 13.
 4. Confira o estado atual: rode `git log --oneline` e veja quais tarefas já têm commit. O progresso
-   real está no histórico do git, não em memória de conversas anteriores.
+   real está no histórico do git, não em memória de conversas anteriores nem na seção "Estado do
+   projeto" abaixo (que também pode ficar desatualizada — trate como indício, não como fonte da
+   verdade).
+5. Ao final de cada tarefa, confira o checklist **Definition of Done** no fim de
+   `docs/12-plano-de-tarefas.md` antes de considerá-la concluída.
 
 ## Documentação (docs/)
 
@@ -62,26 +66,105 @@ Ao mudar comportamento de contrato (rota, payload, schema), atualize o documento
   O `errorHandler` central converte para o envelope de `docs/05-contrato-api.md`.
 - **Sem `enum` do Prisma** (SQL Server + Prisma não suporta). "Enums" são uniões de string em
   `src/domain/enums/index.ts`, com `CHECK constraint` espelhada em migration manual.
+- **`Container` em `src/container.ts` é construído uma vez** (`buildContainer(prisma)`) e monta
+  todos os repositórios, services e controllers por injeção manual de construtor. Serviço novo →
+  adicionar a composição ali, seguindo a ordem: repositórios → providers de infra → services →
+  controllers.
+- **`realtimeProvider` é um `DeferredRealtimeProvider`**, não o `SocketIoProvider` direto — o
+  socket precisa do `http.Server`, que só existe depois de `app.listen()`, ou seja, depois que o
+  container já foi montado. `http/server.ts` chama `.attach(...)` nele assim que o servidor sobe.
+  Em teste de integração nada é anexado; o delegate interno fica no-op. Não replicar esse padrão
+  para `queueProvider` ou outros providers — é específico do Socket.IO.
+
+## Backend — camadas em detalhe (`backend/src/`)
+
+```
+domain/       entidades, interfaces de repositório/provider, erros, enums (união de string)
+services/     regra de negócio, um arquivo por serviço, dependências por construtor
+http/
+  controllers/  traduzem request/response, sem regra de negócio
+  routes/       registram controller + authenticate + authorize + validate
+  schemas/      validação Zod dos payloads
+  presenters/   montam o DTO de resposta campo a campo (nunca `...entity`)
+  middlewares/  authenticate, authorize, validate, upload, rate-limit, error-handler, request-context
+infra/        implementações concretas: prisma/, queue/ (BullMQ), mail/, realtime/ (Socket.IO),
+              storage/ (disco local), security/ (bcrypt, JWT)
+passport/     estratégias OAuth (Google, Microsoft), registradas condicionalmente por credencial
+workers/      processo separado (`npm run dev:worker`), consome fila de e-mail
+container.ts  composição manual de dependências (ver acima)
+```
+
+## Frontend — estrutura em detalhe (`frontend/src/`)
+
+Vite + React 19 + TypeScript, Ant Design (`antd`) para componentes, TanStack Query para estado de
+servidor, Zustand (sem persistência) só para sessão de auth, React Hook Form + Zod para formulários,
+`@hello-pangea/dnd` para o board, Socket.IO client para tempo real, `axios` para HTTP.
+
+```
+app/            providers (QueryClient, Socket), router, bootstrap
+features/<x>/   um domínio por pasta: api/ (chamadas HTTP), hooks/ (TanStack Query), pages/,
+                components/ — não misturar chamada HTTP direta em componente
+shared/
+  api/          http-client (axios com interceptors de refresh) e tradução de erro por `code`
+  components/   RequireAuth, RequireRole, Can, AppLayout, EmptyState, ErrorBoundary
+  hooks/        usePermissions, useSocketStatus, useDebounce
+  lib/          formatação, validação de CNPJ
+```
+
+- **Permissão nunca é decidida no front.** `usePermissions`/`<Can>` só espelham o array
+  `permissions` que a API já calculou e devolveu (ver `process-permissions.ts` no backend e
+  `docs/06`). Esconder um botão é UX; a autorização real está no controller/service.
+- Arquivos de componente em `PascalCase.tsx`, hooks em `camelCase.ts` com prefixo `use`, o resto em
+  `kebab-case.ts` — convenção do documento 09, mesma do backend para não-componentes.
+- **Não há testes automatizados no frontend hoje** (`frontend/src/` não tem nenhum arquivo
+  `*.test.*`), apesar de `docs/09-padroes-de-codigo-e-testes.md` descrever Vitest + Testing
+  Library como padrão pretendido. Se for pedido para escrever teste de frontend, será necessário
+  primeiro instalar e configurar Vitest — não existe suíte prévia para seguir de exemplo.
 
 ## Convenções de código
 
 - TypeScript strict, sem `any`, sem `as` para contornar erro de tipo (usar type guard ou parse).
 - Retorno de função pública sempre anotado explicitamente (regra de lint, gera warning se faltar).
 - Arquivos do backend em `kebab-case` (`auth-service.ts`), classes em `PascalCase` sem prefixo `I`.
-- Commits em Conventional Commits (`feat(auth): ...`, `fix(...)`, `docs(...)`).
 - Comentário explica **por quê**, não **o quê**. Comentários no código citam o documento relevante
   (ex.: `// docs/06, seção "Rotação e detecção de reuso"`) quando a decisão não é óbvia sozinha.
+- Convenções de commit estão na seção **Git** abaixo.
 
 ## Testes
 
-- Jest. `tests/unit/` usa fakes em memória (`tests/helpers/fakes/`) — nunca sobe banco nem Redis.
-- `tests/integration/` usa Supertest contra o app real e o banco de teste real
-  (`abertura_processos_test`). Usa `truncateAll` + `seedBaseline` (`tests/helpers/`) antes de cada
-  teste.
+- Jest (`--runInBand`, nunca `--watch` em execução automatizada). `tests/unit/` usa fakes em
+  memória (`tests/helpers/fakes/`) — nunca sobe banco nem Redis. `tests/integration/` usa
+  Supertest contra o app real e o banco de teste real (`abertura_processos_test`, configurado em
+  `backend/.env.test`). Usa `truncateAll` + `seedBaseline` (`tests/helpers/`) antes de cada teste.
 - Toda tarefa nova exige: testes unitários do service (fakes) + testes de integração dos endpoints
   novos (Supertest). Não é opcional — está no critério de aceite de cada tarefa do documento 12.
-- Rodar antes de considerar uma tarefa concluída: `npm run lint`, `npm run typecheck`, `npm run
-  build`, `npm test` — todos devem passar sem erro.
+- Os 14 fluxos de integração obrigatórios e os limites de cobertura por pasta estão em
+  `docs/09-padroes-de-codigo-e-testes.md` (seção "Testes") e espelhados em `backend/jest.config.js`.
+- **Frontend não tem suíte de testes configurada** (nenhum `*.test.*` em `frontend/src/`), apesar
+  de o documento 09 descrever Vitest + Testing Library como padrão pretendido. Não presumir que
+  existe uma suíte para seguir de exemplo.
+- Comandos, de dentro de `backend/`:
+  ```powershell
+  npm test                 # suíte completa (unit + integration), --runInBand
+  npx jest tests/unit       # só unitários
+  npx jest tests/integration # só integração (precisa do banco de teste rodando e migrado)
+  npm run test:coverage    # com relatório de cobertura em backend/coverage/
+  ```
+- Rodar antes de considerar uma tarefa concluída, de dentro de `backend/` (e `frontend/` quando a
+  tarefa tocar o front): `npm run lint`, `npm run typecheck`, `npm run build`, `npm test` — todos
+  devem passar sem erro. Da raiz, `npm run lint` e `npm run typecheck` cobrem os dois projetos de
+  uma vez; `npm test` na raiz só roda o backend.
+
+## Git
+
+- Commits em Conventional Commits, escopo pelo domínio afetado: `feat(auth): ...`,
+  `feat(processos): ...`, `fix(dashboard): ...`, `docs(...)`. Ver `git log --oneline` para o
+  padrão real seguido até aqui (um commit por tarefa, normalmente).
+- Pre-commit (Husky + lint-staged, `.husky/pre-commit`) roda `eslint --fix` e `prettier --write`
+  nos arquivos alterados. Não pular com `--no-verify` sem pedido explícito.
+- `docs/prompts/` guarda prompts prontos usados para delegar tarefas específicas a uma IA (ex.:
+  `tarefa-05-prompt.md`). Não é obrigatório para trabalhar no projeto, mas é o formato a seguir se
+  for pedido para gerar um prompt de delegação de uma tarefa nova.
 
 ## Ambiente local
 
@@ -116,10 +199,27 @@ verificar as versões reais) assumiam. Onde isso importou, a decisão já foi to
   `tsconfig.json` já usam `paths: { "@/*": ["./src/*"] }` sem `baseUrl`. Siga o padrão existente.
 - **CORS sempre com lista explícita de origens** (`CORS_ORIGINS` no env), nunca `origin: '*'` — a
   API usa cookies (`credentials: true`), e as duas coisas juntas são inseguras.
+- **Nomes de arquivo do backend não seguem o exemplo literal do documento 09.** O documento mostra
+  `process.service.ts` / `authenticate.middleware.ts` (ponto antes do sufixo), mas o código real
+  usa hífen e frequentemente omite o sufixo de papel: `process-service.ts`,
+  `authenticate.ts` (sem `-middleware`). Siga o padrão dos arquivos existentes na mesma pasta, não
+  o exemplo do documento.
 
 ## Estado do projeto
 
-Tarefas 1-6 do plano concluídas (scaffolding, infra local + schema Prisma, esqueleto MVC, auth local
-+ JWT, login social/provisionamento por domínio, rate limiting). Ver `git log --oneline` para o
-histórico exato de commits e `docs/12-plano-de-tarefas.md` para o que falta. Repositório remoto:
+As 22 tarefas do plano estão concluídas: backend completo (auth local/social, rate limiting,
+admin, kanban, processos com escopo/movimentação/auditoria, documentos, fila de e-mail, tempo
+real, dashboard) e frontend completo (scaffolding/rotas/auth, formulário de abertura, board
+Kanban com drag-and-drop, tempo real, gaveta de detalhe, telas de admin por papel, dashboard
+gerencial). Suíte de testes do backend com os 14 fluxos de integração do documento 09, teste de
+arquitetura, teste de consistência enum/CHECK constraint e limites de cobertura configurados.
+
+O checklist de deploy do documento 11 pressupõe Windows Server + IIS reais, que não existem nesta
+sessão de desenvolvimento — só os itens verificáveis sem essa infraestrutura (health checks,
+build de produção, variáveis de ambiente) foram confirmados. O restante (IIS/ARR, NSSM, SSL,
+firewall) precisa ser validado em homologação real antes de ir para produção.
+
+Esta seção é um resumo pontual e **fica desatualizada com o tempo** — confirme sempre com
+`git log --oneline` e, se preciso, com o estado real de `frontend/src/` (sem testes ainda, ver
+seção Testes) antes de assumir que algo está pronto. Repositório remoto:
 `https://github.com/lucasFrt/AberturaProcessos` (privado).
