@@ -9,7 +9,8 @@ frontend (React) vivem em pastas separadas na raiz do repositório.
 AberturaProcessos/
 ├── docs/          # esta documentação
 ├── backend/       # BFF: Express + TypeScript + Prisma + SQL Server
-└── frontend/      # React + TypeScript + Vite
+├── frontend/      # React + TypeScript + Vite
+└── mcp-server/    # MCP (stdio) que expõe o intake ao agente de e-mail (docs/13)
 ```
 
 ## Índice
@@ -29,7 +30,7 @@ AberturaProcessos/
 | [11-deploy-windows-server.md](./11-deploy-windows-server.md) | Windows Server 2022 + IIS + NSSM + SQL Server |
 | [12-plano-de-tarefas.md](./12-plano-de-tarefas.md) | Tarefas incrementais (22 do núcleo + Fase 7 de alimentação por IA), cada uma com critério de aceite |
 | [13-integracao-ia-email.md](./13-integracao-ia-email.md) | Alimentação por IA: chaves de API, intake idempotente por e-mail, anexos via Microsoft Graph, MCP server |
-| [prompts/](./prompts/) | Prompts prontos para delegar cada tarefa a uma IA, com contexto e referências já resolvidas |
+| [prompts/](./prompts/) | Prompts prontos: delegação de tarefas a uma IA e o **prompt operacional do agente de e-mail** (`agente-email-haiku.md`) |
 
 Ver também [`CLAUDE.md`](../CLAUDE.md) na raiz do repositório: contexto operacional para agentes de
 IA (regras de arquitetura, convenções, decisões técnicas já tomadas, estado atual do projeto).

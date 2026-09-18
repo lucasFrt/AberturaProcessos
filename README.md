@@ -96,6 +96,14 @@ npm run prisma:deploy:test   # banco de teste (necessário para `npm test`)
 npm run seed
 ```
 
+### Alimentação por IA (opcional)
+
+O sistema pode ser alimentado por um agente de IA que lê a caixa de e-mail (docs/13). Para isso:
+crie uma chave em **Administração → Chaves de API**, configure `GRAPH_*` no `.env` para o
+backend baixar anexos do Outlook (docs/10), compile o `mcp-server/` (`npm install && npm run
+build`) e registre-o no orquestrador do agente com o prompt de
+`docs/prompts/agente-email-haiku.md` (ver `mcp-server/README.md`).
+
 O seed é idempotente: cria a organização interna, o domínio de e-mail reconhecido, um usuário
 admin e as etapas padrão do Kanban (credenciais em `ADMIN_SEED_EMAIL`/`ADMIN_SEED_PASSWORD` no
 `.env`).

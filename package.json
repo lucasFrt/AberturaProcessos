@@ -5,8 +5,8 @@
   "description": "Sistema de abertura e acompanhamento de processos de comércio exterior",
   "scripts": {
     "prepare": "husky",
-    "lint": "npm run lint --prefix backend && npm run lint --prefix frontend",
-    "typecheck": "npm run typecheck --prefix backend && npm run typecheck --prefix frontend",
+    "lint": "npm run lint --prefix backend && npm run lint --prefix frontend && npm run lint --prefix mcp-server",
+    "typecheck": "npm run typecheck --prefix backend && npm run typecheck --prefix frontend && npm run typecheck --prefix mcp-server",
     "test": "npm test --prefix backend"
   },
   "lint-staged": {
@@ -17,6 +17,9 @@
     "frontend/**/*.{ts,tsx}": [
       "eslint --fix --config frontend/eslint.config.js",
       "prettier --write --config frontend/.prettierrc.json"
+    ],
+    "mcp-server/**/*.ts": [
+      "prettier --write --config mcp-server/.prettierrc.json"
     ]
   },
   "keywords": [],

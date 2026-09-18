@@ -11,6 +11,12 @@ trading/despachante aduaneiro. Formulário de entrada → funil Kanban configur�
 gerencial. Multi-tenant por organização (domínio de e-mail agrupa CNPJs). Backend (BFF) em
 TypeScript/Express, frontend em React, ambos em `backend/` e `frontend/` na raiz.
 
+**A alimentação do sistema é feita por IA** (docs/13): um agente (Claude Haiku 4.5 em tarefa
+agendada com conector de Outlook) lê a caixa de e-mail e abre/complementa processos pela API de
+intake (`/intake/*`), autenticado por chave de API (`X-Api-Key`). O pacote `mcp-server/` expõe
+esse intake como ferramentas MCP; o prompt do agente está em `docs/prompts/agente-email-haiku.md`.
+O operacional continua consultando e movimentando o funil pelo front.
+
 ## Antes de escrever qualquer código
 
 1. **Leia `docs/README.md`** — índice de toda a documentação, com o que cada arquivo cobre.
@@ -40,7 +46,8 @@ TypeScript/Express, frontend em React, ambos em `backend/` e `frontend/` na raiz
 | `09-padroes-de-codigo-e-testes.md` | SOLID aplicado, convenções de nome, estratégia de testes |
 | `10-ambiente-e-configuracao.md` | Variáveis de ambiente, docker-compose, setup local |
 | `11-deploy-windows-server.md` | IIS, NSSM, produção |
-| `12-plano-de-tarefas.md` | **Comece aqui.** As 22 tarefas em ordem. |
+| `12-plano-de-tarefas.md` | **Comece aqui.** As 22 tarefas do núcleo + Fase 7 (alimentação por IA). |
+| `13-integracao-ia-email.md` | Alimentação por IA: chaves de API, intake idempotente, anexos via Graph, cadastro automático, MCP |
 
 Ao mudar comportamento de contrato (rota, payload, schema), atualize o documento correspondente
 **antes** ou **junto** da implementação — os docs são a fonte da verdade, não um artefato descartável.
@@ -51,7 +58,8 @@ Ao mudar comportamento de contrato (rota, payload, schema), atualize o documento
   implementação Prisma em `infra/`). Controllers não têm regra de negócio; services não conhecem
   Express nem Prisma diretamente.
 - **Nenhum arquivo em `src/services/` ou `src/domain/` importa `@prisma/client`, `express`, ou
-  qualquer coisa de `infra/prisma`, `infra/queue`, `infra/mail`, `infra/storage`, `infra/realtime`.**
+  qualquer coisa de `infra/prisma`, `infra/queue`, `infra/mail`, `infra/storage`, `infra/realtime`,
+  `infra/cnpj`, `infra/graph`.**
   Isso é reforçado por `no-restricted-imports` no `eslint.config.js` do backend — se o lint falhar
   com esse erro, o código está na camada errada, não é para suprimir a regra.
 - **AccessScope obrigatório**: todo método de leitura de repositório que toca em dados
@@ -88,11 +96,33 @@ http/
   presenters/   montam o DTO de resposta campo a campo (nunca `...entity`)
   middlewares/  authenticate, authorize, validate, upload, rate-limit, error-handler, request-context
 infra/        implementações concretas: prisma/, queue/ (BullMQ), mail/, realtime/ (Socket.IO),
-              storage/ (disco local), security/ (bcrypt, JWT)
+              storage/ (disco local), security/ (bcrypt, JWT, chave de API), cnpj/ (ReceitaWS),
+              graph/ (anexos de e-mail via Microsoft Graph, client credentials)
 passport/     estratégias OAuth (Google, Microsoft), registradas condicionalmente por credencial
 workers/      processo separado (`npm run dev:worker`), consome fila de e-mail
 container.ts  composição manual de dependências (ver acima)
 ```
+
+## Intake por IA (`backend/src/services/intake-service.ts`, docs/13)
+
+- **`authenticate` aceita `X-Api-Key` além do JWT.** A chave resolve para o usuário interno
+  vinculado (`ApiKey.userId`); `req.auth.authKind` diz qual credencial foi usada e é o que define
+  `Process.source`/`Document.source` (JWT → `WEB`, chave → `API`, rota de intake → `EMAIL`).
+  `source` nunca vem do payload.
+- **Idempotência por `IntakeEvent (channel, externalId)`** com claim `PROCESSING` → `COMPLETED`
+  | `FAILED`. Duplicata responde 200 `duplicate: true`; `FAILED` é retomado (reaproveita
+  `processId` se já existia). Não "otimizar" o claim para find-then-create — a unicidade é do
+  banco de propósito (execuções concorrentes do agente).
+- **Anexos são baixados antes de qualquer escrita** (`MailAttachmentProvider`), para uma falha do
+  Graph não deixar processo sem documento. `GRAPH_INTAKE_ENABLED=false` → `503
+  MAIL_ATTACHMENTS_DISABLED`; o multipart (`payload` + `files`) continua funcionando e é o que a
+  suíte usa.
+- **Empresa desconhecida é cadastrada, não rejeitada** (docs/13, decisão 5). Domínio de webmail
+  público nunca vira `EmailDomain`; domínio corporativo novo entra com `autoApprove = false`.
+- **`/intake/*` não passa pelo `uploadLimiter`** (30/10 min é para pessoas); usa o limite
+  interno de `rateLimitByRole`.
+- `mcp-server/` é um pacote separado (ESM, `@modelcontextprotocol/sdk`), sem regra de negócio:
+  só traduz ferramentas em chamadas a `/intake/*`. `npm test` ali sobe o servidor por stdio.
 
 ## Frontend — estrutura em detalhe (`frontend/src/`)
 
@@ -143,6 +173,8 @@ shared/
 - **Frontend não tem suíte de testes configurada** (nenhum `*.test.*` em `frontend/src/`), apesar
   de o documento 09 descrever Vitest + Testing Library como padrão pretendido. Não presumir que
   existe uma suíte para seguir de exemplo.
+- **O banco de teste precisa estar migrado** antes de `npm test` (a suíte não aplica migrations):
+  `npm run prisma:deploy:test` de dentro de `backend/`, depois de cada migration nova.
 - Comandos, de dentro de `backend/`:
   ```powershell
   npm test                 # suíte completa (unit + integration), --runInBand
@@ -207,7 +239,14 @@ verificar as versões reais) assumiam. Onde isso importou, a decisão já foi to
 
 ## Estado do projeto
 
-As 22 tarefas do plano estão concluídas: backend completo (auth local/social, rate limiting,
+As 22 tarefas do núcleo e a Fase 7 (Tarefas 23–26, alimentação por IA — chaves de API,
+origem/solicitante/CPF, intake idempotente por e-mail com anexos via Graph, MCP server + prompt do
+agente) estão concluídas. O que falta para o agente rodar de fato é infraestrutura fora do
+repositório: registro de aplicação no Entra ID com `Mail.Read` + `ApplicationAccessPolicy`
+(docs/13, "Configuração"), a API publicada com URL acessível pelo orquestrador, e a tarefa
+agendada do Haiku configurada com o MCP e o prompt de `docs/prompts/agente-email-haiku.md`.
+
+Backend completo (auth local/social, rate limiting,
 admin, kanban, processos com escopo/movimentação/auditoria, documentos, fila de e-mail, tempo
 real, dashboard) e frontend completo (scaffolding/rotas/auth, formulário de abertura, board
 Kanban com drag-and-drop, tempo real, gaveta de detalhe, telas de admin por papel, dashboard
