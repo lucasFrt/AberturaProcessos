@@ -11,6 +11,7 @@ import type {
   UpdateProcessData,
 } from '@/domain/entities/process';
 import { toProcessListItem } from '@/domain/entities/process';
+import type { RecordSource } from '@/domain/enums';
 import {
   ConflictError,
   ForbiddenError,
@@ -53,6 +54,10 @@ export interface CreateProcessInput {
   requestingCompanyId?: string | null | undefined;
   reference: string;
   additionalInfo?: string | null | undefined;
+  /** Origem (docs/13, decisão 7). Decidida pelo controller/intake a partir da credencial e da rota; padrão WEB. */
+  source?: RecordSource | undefined;
+  requester?: { name: string | null; email: string | null } | null | undefined;
+  receivedAt?: Date | null | undefined;
 }
 
 export interface UpdateProcessInput {
@@ -117,6 +122,10 @@ export class ProcessService {
       requestingCompanyId: input.requestingCompanyId ?? null,
       currentStageId: firstStage.id,
       createdById: actorId,
+      source: input.source ?? 'WEB',
+      requesterName: input.requester?.name ?? null,
+      requesterEmail: input.requester?.email ?? null,
+      receivedAt: input.receivedAt ?? null,
     });
 
     // Emissão pós-commit (docs/07): só depois que `createWithHistory` já

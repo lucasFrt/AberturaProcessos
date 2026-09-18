@@ -6,23 +6,58 @@ import type {
   CreateCompanyData,
   UpdateCompanyData,
 } from '@/domain/entities/company';
+import type { CompanyDocumentType } from '@/domain/enums';
 import type { Page, PaginationParams } from '@/domain/pagination';
 import type { CompanyRepository } from '@/domain/repositories/company-repository';
+
+interface CompanyRecord {
+  id: string;
+  cnpj: string;
+  documentType: string;
+  legalName: string;
+  tradeName: string | null;
+  organizationId: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  organization?: { id: string; name: string };
+}
+
+/** `documentType` é String no banco (sem enum no SQL Server, docs/04); a CHECK constraint garante o valor. */
+function toDomain(record: CompanyRecord): Company {
+  return {
+    id: record.id,
+    cnpj: record.cnpj,
+    documentType: record.documentType as CompanyDocumentType,
+    legalName: record.legalName,
+    tradeName: record.tradeName,
+    organizationId: record.organizationId,
+    isActive: record.isActive,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    ...(record.organization
+      ? { organization: { id: record.organization.id, name: record.organization.name } }
+      : {}),
+  };
+}
 
 export class PrismaCompanyRepository implements CompanyRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
   async findManyByIds(ids: string[]): Promise<Company[]> {
     if (ids.length === 0) return [];
-    return this.prisma.company.findMany({ where: { id: { in: ids } } });
+    const rows = await this.prisma.company.findMany({ where: { id: { in: ids } } });
+    return rows.map(toDomain);
   }
 
   async findById(id: string): Promise<Company | null> {
-    return this.prisma.company.findUnique({ where: { id } });
+    const row = await this.prisma.company.findUnique({ where: { id } });
+    return row ? toDomain(row) : null;
   }
 
   async findByCnpj(cnpj: string): Promise<Company | null> {
-    return this.prisma.company.findUnique({ where: { cnpj } });
+    const row = await this.prisma.company.findUnique({ where: { cnpj } });
+    return row ? toDomain(row) : null;
   }
 
   async list(filters: CompanyFilters, pagination: PaginationParams): Promise<Page<Company>> {
@@ -51,11 +86,12 @@ export class PrismaCompanyRepository implements CompanyRepository {
       this.prisma.company.count({ where }),
     ]);
 
-    return { items: rows, total };
+    return { items: rows.map(toDomain), total };
   }
 
   async create(data: CreateCompanyData): Promise<Company> {
-    return this.prisma.company.create({ data });
+    const row = await this.prisma.company.create({ data });
+    return toDomain(row);
   }
 
   async update(id: string, data: UpdateCompanyData): Promise<Company> {
@@ -67,7 +103,8 @@ export class PrismaCompanyRepository implements CompanyRepository {
         ? { organization: { connect: { id: data.organizationId } } }
         : {}),
     };
-    return this.prisma.company.update({ where: { id }, data: updateData });
+    const row = await this.prisma.company.update({ where: { id }, data: updateData });
+    return toDomain(row);
   }
 
   async delete(id: string): Promise<void> {

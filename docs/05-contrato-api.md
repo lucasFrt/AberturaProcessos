@@ -38,7 +38,8 @@ Base: `/api/v1`. Todo corpo de requisição e resposta é `application/json`, ex
 | HTTP | `code` | Quando |
 | --- | --- | --- |
 | 400 | `VALIDATION_ERROR` | Falha de schema Zod. `details` lista os campos. |
-| 400 | `INVALID_CNPJ` | CNPJ com dígitos verificadores inválidos. |
+| 400 | `INVALID_CNPJ` | CNPJ (14 dígitos) com dígitos verificadores inválidos. |
+| 400 | `INVALID_CPF` | CPF (11 dígitos) com dígitos verificadores inválidos. |
 | 401 | `UNAUTHENTICATED` | Sem token, token expirado ou inválido. |
 | 401 | `INVALID_CREDENTIALS` | E-mail ou senha incorretos. |
 | 403 | `FORBIDDEN` | Autenticado, porém sem papel/permissão para a ação. |
@@ -225,13 +226,15 @@ vez por minuto por chave.
 | Método | Rota | Descrição |
 | --- | --- | --- |
 | `GET` | `/companies` | Filtros: `q` (razão social, nome fantasia ou CNPJ), `organizationId`, `isActive`. CLIENT recebe apenas os CNPJs do seu escopo. |
-| `POST` | `/companies` | `{ cnpj, legalName, tradeName?, organizationId }` |
+| `POST` | `/companies` | `{ cnpj, legalName, tradeName?, organizationId }`. `cnpj` aceita CNPJ (14 dígitos) **ou CPF** (11); a resposta traz `documentType: "CNPJ" \| "CPF"` (docs/13, decisão 5). |
 | `GET` | `/companies/lookup/:cnpj` | Consulta os dados cadastrais na Receita para autopreencher o formulário. Ver abaixo. |
 | `GET` | `/companies/:id` | Detalhe. |
 | `PATCH` | `/companies/:id` | `{ legalName?, tradeName?, isActive?, organizationId? }` |
 | `DELETE` | `/companies/:id` | `409 CONFLICT` se houver processos. |
 
-O CNPJ é aceito com ou sem máscara e persistido apenas com dígitos.
+O CNPJ/CPF é aceito com ou sem máscara e persistido apenas com dígitos na coluna `cnpj`
+(nome histórico); `documentType` diz o que ela contém. A consulta na Receita
+(`GET /companies/lookup/:cnpj`) só existe para CNPJ.
 
 ### `GET /companies/lookup/:cnpj`
 
@@ -337,6 +340,10 @@ Item da lista:
   "currentStage": { "id": "cst2", "name": "Em Andamento", "color": "#faad14", "order": 1, "isFinal": false },
   "responsible": { "id": "cus9", "name": "Carlos Souza" },
   "documentCount": 3,
+  "source": "EMAIL",
+  "requesterName": "João",
+  "requesterEmail": "joao@clientex.com.br",
+  "receivedAt": "2026-08-01T09:10:00.000Z",
   "stageChangedAt": "2026-08-05T12:00:00.000Z",
   "completedAt": null,
   "createdAt": "2026-08-01T09:15:00.000Z"
@@ -380,6 +387,10 @@ Detalhe agregado para a gaveta:
   "currentStage": { "id": "cst2", "name": "Em Andamento", "color": "#faad14", "order": 1, "isFinal": false },
   "responsible": { "id": "cus9", "name": "Carlos Souza", "email": "carlos@opusce.com.br" },
   "createdBy": { "id": "cus3", "name": "Maria Silva" },
+  "source": "WEB",
+  "requesterName": null,
+  "requesterEmail": null,
+  "receivedAt": null,
   "stageChangedAt": "2026-08-05T12:00:00.000Z",
   "completedAt": null,
   "createdAt": "2026-08-01T09:15:00.000Z",
@@ -388,6 +399,7 @@ Detalhe agregado para a gaveta:
     {
       "id": "cdo1", "originalName": "invoice.pdf", "mimeType": "application/pdf",
       "size": 184320, "uploadedBy": { "id": "cus3", "name": "Maria Silva" },
+      "source": "WEB", "receivedAt": null,
       "createdAt": "2026-08-01T09:20:00.000Z",
       "downloadUrl": "/api/v1/documents/cdo1/download"
     }
@@ -408,6 +420,11 @@ Detalhe agregado para a gaveta:
   }
 }
 ```
+
+`source`, `requesterName`, `requesterEmail` e `receivedAt` (docs/13, decisão 7) existem na
+listagem e no detalhe. `source` **não é aceito no payload** de `POST /processes`: é derivado da
+credencial (JWT → `WEB`, `X-Api-Key` → `API`) ou da rota de intake (`EMAIL`). Os campos de
+solicitante e `receivedAt` só são preenchidos pelo intake.
 
 `permissions` é calculado no servidor para o usuário da requisição. A UI usa esse objeto para
 habilitar/desabilitar ações, mas a autorização real continua sendo feita em cada endpoint.
@@ -453,8 +470,11 @@ tamanho por arquivo em `MAX_UPLOAD_SIZE_MB` (padrão 100). Rate limit de upload.
 `201`:
 
 ```json
-{ "data": [ { "id": "cdo7", "originalName": "bl.pdf", "size": 91234, "mimeType": "application/pdf", "createdAt": "..." } ] }
+{ "data": [ { "id": "cdo7", "originalName": "bl.pdf", "size": 91234, "mimeType": "application/pdf", "uploadedBy": { "id": "cus3", "name": "Maria Silva" }, "source": "WEB", "receivedAt": null, "createdAt": "..." } ] }
 ```
+
+`source` segue a mesma regra do processo (JWT → `WEB`, chave de API → `API`); `receivedAt` só é
+preenchido pelo intake por e-mail.
 
 Gera um histórico `DOCUMENT_ADDED` por arquivo e emite `process:updated`.
 

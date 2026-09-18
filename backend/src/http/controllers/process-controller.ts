@@ -59,6 +59,8 @@ export class ProcessController {
         requestingCompanyId: body.requestingCompanyId,
         reference: body.reference,
         additionalInfo: body.additionalInfo,
+        // Origem derivada da credencial, nunca do payload (docs/13, decisão 7).
+        source: req.auth.authKind === 'API_KEY' ? 'API' : 'WEB',
       });
 
       const permissions = calculateProcessPermissions(req.auth.role);

@@ -1,4 +1,5 @@
 import type { UserSummary } from '@/domain/entities/process';
+import type { RecordSource } from '@/domain/enums';
 
 /**
  * Entidade de domínio de Document (docs/04, model Document; RF-40 a
@@ -16,6 +17,9 @@ export interface Document {
   size: number;
   sha256: string;
   uploadedById: string;
+  /** Origem e data de recebimento (docs/13, decisão 7). `receivedAt` null = igual a `createdAt`. */
+  source: RecordSource;
+  receivedAt: Date | null;
   deletedAt: Date | null;
   deletedById: string | null;
   createdAt: Date;
@@ -35,6 +39,8 @@ export interface CreateDocumentData {
   size: number;
   sha256: string;
   uploadedById: string;
+  source: RecordSource;
+  receivedAt: Date | null;
 }
 
 export interface CreateDocumentWithHistoryInput {

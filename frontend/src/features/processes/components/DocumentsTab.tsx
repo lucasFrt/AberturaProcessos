@@ -1,5 +1,5 @@
 import { DeleteOutlined, DownloadOutlined, InboxOutlined } from '@ant-design/icons';
-import { App, Button, Flex, List, Typography, Upload } from 'antd';
+import { App, Button, Flex, List, Tag, Typography, Upload } from 'antd';
 import type { UploadProps } from 'antd';
 import type { RcFile } from 'antd/es/upload';
 import type { ReactElement } from 'react';
@@ -123,6 +123,13 @@ export function DocumentsTab({ process }: DocumentsTabProps): ReactElement {
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                   {formatFileSize(doc.size)} · {doc.mimeType} · {doc.uploadedBy.name} ·{' '}
                   {formatDateTime(doc.createdAt)}
+                  {doc.source === 'EMAIL' && (
+                    <>
+                      {' '}
+                      · <Tag color="geekblue">e-mail</Tag>
+                      {doc.receivedAt && `recebido em ${formatDateTime(doc.receivedAt)}`}
+                    </>
+                  )}
                 </Typography.Text>
               }
             />

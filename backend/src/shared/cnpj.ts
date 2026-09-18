@@ -36,3 +36,54 @@ export function isValidCnpj(rawValue: string): boolean {
 
   return true;
 }
+
+/**
+ * Validação de CPF (docs/13, decisão 5): 11 dígitos + dois dígitos
+ * verificadores por módulo 11. Mesma função pura, mesmo uso que `isValidCnpj`.
+ */
+export function isValidCpf(rawValue: string): boolean {
+  const digits = normalizeCnpjDigits(rawValue);
+
+  if (digits.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(digits)) return false;
+
+  const numbers = digits.split('').map(Number);
+  const check = (length: number): number => {
+    const sum = numbers
+      .slice(0, length)
+      .reduce((acc, digit, index) => acc + digit * (length + 1 - index), 0);
+    const remainder = (sum * 10) % 11;
+    return remainder === 10 ? 0 : remainder;
+  };
+
+  return check(9) === numbers[9] && check(10) === numbers[10];
+}
+
+export type DocumentKind = 'CNPJ' | 'CPF';
+
+/**
+ * Classifica e valida um documento pelo tamanho: 14 dígitos → CNPJ, 11 → CPF.
+ * Devolve `null` quando o tamanho não corresponde a nenhum dos dois ou os
+ * dígitos verificadores são inválidos — quem chama decide o código de erro.
+ */
+export function classifyDocument(rawValue: string): { kind: DocumentKind; digits: string } | null {
+  const digits = normalizeCnpjDigits(rawValue);
+  if (digits.length === 14) {
+    return isValidCnpj(digits) ? { kind: 'CNPJ', digits } : null;
+  }
+  if (digits.length === 11) {
+    return isValidCpf(digits) ? { kind: 'CPF', digits } : null;
+  }
+  return null;
+}
+
+/** `12345678000190` → `12.345.678/0001-90`; `12345678909` → `123.456.789-09`. */
+export function formatDocument(digits: string): string {
+  if (digits.length === 14) {
+    return digits.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+  }
+  if (digits.length === 11) {
+    return digits.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+  }
+  return digits;
+}

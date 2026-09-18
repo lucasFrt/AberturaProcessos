@@ -1,6 +1,10 @@
+import type { CompanyDocumentType } from '@/domain/enums';
+
 export interface Company {
   id: string;
+  /** Somente dígitos: 14 (CNPJ) ou 11 (CPF) — ver `documentType`. */
   cnpj: string;
+  documentType: CompanyDocumentType;
   legalName: string;
   tradeName: string | null;
   organizationId: string;
@@ -18,6 +22,7 @@ export interface Company {
 
 export interface CreateCompanyData {
   cnpj: string;
+  documentType: CompanyDocumentType;
   legalName: string;
   tradeName: string | null;
   organizationId: string;

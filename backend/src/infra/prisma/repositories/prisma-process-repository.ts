@@ -19,7 +19,7 @@ import type {
   UpdateProcessWithHistoryInput,
   UserSummary,
 } from '@/domain/entities/process';
-import type { HistoryAction } from '@/domain/enums';
+import type { HistoryAction, RecordSource } from '@/domain/enums';
 import { AppError } from '@/domain/errors/app-error';
 import type { Page, PaginationParams } from '@/domain/pagination';
 import type { ProcessRepository } from '@/domain/repositories/process-repository';
@@ -94,6 +94,10 @@ function mapListItem(row: ListItemRow): ProcessListItem {
     currentStage: stageSummary(row.currentStage),
     responsible: row.responsible ? userSummary(row.responsible) : null,
     documentCount: row._count.documents,
+    source: row.source as RecordSource,
+    requesterName: row.requesterName,
+    requesterEmail: row.requesterEmail,
+    receivedAt: row.receivedAt,
     stageChangedAt: row.stageChangedAt,
     completedAt: row.completedAt,
     createdAt: row.createdAt,
@@ -107,6 +111,8 @@ function mapDocument(doc: DetailRow['documents'][number]): ProcessDocumentSummar
     mimeType: doc.mimeType,
     size: doc.size,
     uploadedBy: userSummary(doc.uploadedBy),
+    source: doc.source as RecordSource,
+    receivedAt: doc.receivedAt,
     createdAt: doc.createdAt,
   };
 }
@@ -137,12 +143,41 @@ function mapDetail(row: DetailRow): ProcessDetail {
       ? { id: row.responsible.id, name: row.responsible.name, email: row.responsible.email }
       : null,
     createdBy: userSummary(row.createdBy),
+    source: row.source as RecordSource,
+    requesterName: row.requesterName,
+    requesterEmail: row.requesterEmail,
+    receivedAt: row.receivedAt,
     stageChangedAt: row.stageChangedAt,
     completedAt: row.completedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     documents: row.documents.map(mapDocument),
     history: row.history.map(mapHistoryEntry),
+  };
+}
+
+/** `source` é String no banco (sem enum no SQL Server, docs/04); a CHECK constraint garante o valor. */
+function toDomainProcess(row: Omit<Process, 'source'> & { source: string }): Process {
+  return {
+    id: row.id,
+    code: row.code,
+    reference: row.reference,
+    additionalInfo: row.additionalInfo,
+    source: row.source as RecordSource,
+    requesterName: row.requesterName,
+    requesterEmail: row.requesterEmail,
+    receivedAt: row.receivedAt,
+    clientCompanyId: row.clientCompanyId,
+    requestingCompanyId: row.requestingCompanyId,
+    currentStageId: row.currentStageId,
+    responsibleId: row.responsibleId,
+    createdById: row.createdById,
+    stageChangedAt: row.stageChangedAt,
+    completedAt: row.completedAt,
+    deletedAt: row.deletedAt,
+    deletedById: row.deletedById,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 
@@ -183,9 +218,10 @@ export class PrismaProcessRepository implements ProcessRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
   async findRawById(id: string, scope: AccessScope): Promise<Process | null> {
-    return this.prisma.process.findFirst({
+    const row = await this.prisma.process.findFirst({
       where: { id, deletedAt: null, ...scopeWhere(scope) },
     });
+    return row ? toDomainProcess(row) : null;
   }
 
   async findDetailById(id: string, scope: AccessScope): Promise<ProcessDetail | null> {
@@ -292,6 +328,10 @@ export class PrismaProcessRepository implements ProcessRepository {
               requestingCompanyId: input.requestingCompanyId,
               currentStageId: input.currentStageId,
               createdById: input.createdById,
+              source: input.source,
+              requesterName: input.requesterName,
+              requesterEmail: input.requesterEmail,
+              receivedAt: input.receivedAt,
             },
           });
 

@@ -41,15 +41,15 @@ import { translateError } from '@/shared/api/errors';
 import { Can } from '@/shared/components/Can';
 import { PageHeader } from '@/shared/components/PageHeader';
 import { useDebounce } from '@/shared/hooks/useDebounce';
-import { isValidCnpj, maskCnpj, normalizeCnpjDigits } from '@/shared/lib/cnpj';
+import { isValidCnpj, isValidDocument, maskDocument, normalizeCnpjDigits } from '@/shared/lib/cnpj';
 
 // --- Schema ---
 
 const companySchema = z.object({
   cnpj: z
     .string()
-    .min(1, 'CNPJ é obrigatório.')
-    .refine((v) => isValidCnpj(v), 'CNPJ inválido.'),
+    .min(1, 'CNPJ/CPF é obrigatório.')
+    .refine((v) => isValidDocument(v), 'CNPJ ou CPF inválido.'),
   legalName: z.string().trim().min(1, 'Razão social é obrigatória.'),
   tradeName: z.string().trim().optional(),
   organizationId: z.string().min(1, 'Organização é obrigatória.'),
@@ -266,7 +266,7 @@ export function CompaniesPage(): ReactElement {
     setEditingCompany(company);
     reset({
       // A API devolve só dígitos; o formulário exibe com máscara.
-      cnpj: maskCnpj(company.cnpj),
+      cnpj: maskDocument(company.cnpj),
       legalName: company.legalName,
       tradeName: company.tradeName ?? '',
       organizationId: company.organizationId,
@@ -302,9 +302,18 @@ export function CompaniesPage(): ReactElement {
 
   const columns: ColumnsType<CompanyDto> = [
     {
-      title: 'CNPJ',
+      title: 'CNPJ/CPF',
       key: 'cnpj',
-      render: (_, record) => maskCnpj(record.cnpj),
+      render: (_, record) => (
+        <>
+          {maskDocument(record.cnpj)}
+          {record.documentType === 'CPF' && (
+            <Tag style={{ marginLeft: 8 }} color="purple">
+              CPF
+            </Tag>
+          )}
+        </>
+      ),
     },
     { title: 'Razão social', dataIndex: 'legalName', key: 'legalName' },
     {
@@ -362,7 +371,7 @@ export function CompaniesPage(): ReactElement {
 
       <Space style={{ marginBottom: 16 }}>
         <Input.Search
-          placeholder="Buscar por razão social ou CNPJ"
+          placeholder="Buscar por razão social, CNPJ ou CPF"
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
@@ -409,14 +418,14 @@ export function CompaniesPage(): ReactElement {
       >
         <Form layout="vertical">
           <Form.Item
-            label="CNPJ"
+            label="CNPJ ou CPF"
             required
             validateStatus={errors.cnpj ? 'error' : ''}
             help={errors.cnpj?.message}
             extra={
               editingCompany
                 ? undefined
-                : 'Digite o CNPJ completo: a razão social e o nome fantasia são buscados na Receita Federal.'
+                : 'CNPJ completo: razão social e nome fantasia são buscados na Receita Federal. CPF (pessoa física): preencha o nome manualmente.'
             }
           >
             <Controller
@@ -425,8 +434,8 @@ export function CompaniesPage(): ReactElement {
               render={({ field }) => (
                 <Input
                   {...field}
-                  onChange={(event) => field.onChange(maskCnpj(event.target.value))}
-                  placeholder="00.000.000/0000-00"
+                  onChange={(event) => field.onChange(maskDocument(event.target.value))}
+                  placeholder="00.000.000/0000-00 ou 000.000.000-00"
                   inputMode="numeric"
                   disabled={editingCompany !== null}
                   suffix={

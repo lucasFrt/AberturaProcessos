@@ -13,6 +13,8 @@ interface DocumentDto {
   mimeType: string;
   size: number;
   uploadedBy: UserSummaryDto;
+  source: string;
+  receivedAt: string | null;
   createdAt: string;
 }
 
@@ -23,6 +25,8 @@ export function presentDocument(document: DocumentWithUploader): DocumentDto {
     mimeType: document.mimeType,
     size: document.size,
     uploadedBy: { id: document.uploadedBy.id, name: document.uploadedBy.name },
+    source: document.source,
+    receivedAt: document.receivedAt ? document.receivedAt.toISOString() : null,
     createdAt: document.createdAt.toISOString(),
   };
 }

@@ -43,7 +43,11 @@ export class DocumentController {
         throw new ValidationError('Envie ao menos um arquivo no campo "files".');
       }
 
-      const documents = await this.service.upload(id, req.auth.userId, req.auth.scope, files);
+      // Origem derivada da credencial, nunca do payload (docs/13, decisão 7).
+      const source = req.auth.authKind === 'API_KEY' ? 'API' : 'WEB';
+      const documents = await this.service.upload(id, req.auth.userId, req.auth.scope, files, {
+        source,
+      });
       res.status(201).json({ data: documents.map(presentDocument) });
     } catch (error) {
       next(error);

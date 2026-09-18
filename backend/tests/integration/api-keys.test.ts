@@ -1,3 +1,6 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+
 import type { PrismaClient } from '@prisma/client';
 import type { Express } from 'express';
 import request from 'supertest';
@@ -103,6 +106,7 @@ describe('Chaves de API — integração (docs/13, decisão 2)', () => {
     await closeTestQueueProviders();
     await closeSharedRedisClient();
     await prisma.$disconnect();
+    await fs.rm(path.resolve(env.STORAGE_ROOT), { recursive: true, force: true });
   });
 
   async function createApiKey(userId: string): Promise<CreatedApiKeyBody> {
@@ -146,6 +150,53 @@ describe('Chaves de API — integração (docs/13, decisão 2)', () => {
 
     const stored = await prisma.apiKey.findUniqueOrThrow({ where: { id: created.id } });
     expect(stored.lastUsedAt).not.toBeNull();
+  });
+
+  it('processo e documento criados com a chave ficam com source = API (docs/13, decisão 7)', async () => {
+    const created = await createApiKey(operationalUserId);
+    await prisma.kanbanStage.create({ data: { name: 'Entrada', order: 0 } });
+    const company = await prisma.company.create({
+      data: {
+        cnpj: '11222333000181',
+        legalName: 'Cliente LTDA',
+        organizationId: 'org-client-test',
+      },
+    });
+
+    const processResponse = await request(app)
+      .post(PROCESSES_BASE)
+      .set('X-Api-Key', created.key)
+      .send({ clientCompanyId: company.id, reference: 'Via chave de API' });
+
+    expect(processResponse.status).toBe(201);
+    const process = processResponse.body as {
+      id: string;
+      source: string;
+      createdBy: { id: string };
+      requesterEmail: string | null;
+    };
+    expect(process.source).toBe('API');
+    expect(process.createdBy.id).toBe(operationalUserId);
+    expect(process.requesterEmail).toBeNull();
+
+    const uploadResponse = await request(app)
+      .post(`${PROCESSES_BASE}/${process.id}/documents`)
+      .set('X-Api-Key', created.key)
+      .attach('files', Buffer.from('conteudo'), 'invoice.pdf');
+
+    expect(uploadResponse.status).toBe(201);
+    const upload = uploadResponse.body as {
+      data: Array<{ source: string; receivedAt: string | null }>;
+    };
+    expect(upload.data[0]?.source).toBe('API');
+    expect(upload.data[0]?.receivedAt).toBeNull();
+
+    // Pelo formulário (JWT) a origem é WEB.
+    const webResponse = await request(app)
+      .post(PROCESSES_BASE)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ clientCompanyId: company.id, reference: 'Via formulário' });
+    expect((webResponse.body as { source: string }).source).toBe('WEB');
   });
 
   it('chave inexistente ou ausente responde 401', async () => {

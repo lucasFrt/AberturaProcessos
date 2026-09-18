@@ -1,4 +1,10 @@
-import { isValidCnpj, normalizeCnpjDigits } from '@/shared/cnpj';
+import {
+  classifyDocument,
+  formatDocument,
+  isValidCnpj,
+  isValidCpf,
+  normalizeCnpjDigits,
+} from '@/shared/cnpj';
 
 /**
  * Cobre os ramos do validador de CNPJ (RF-12, docs/09): normalização com
@@ -42,6 +48,50 @@ describe('cnpj', () => {
 
     it('rejeita quando o segundo dígito verificador está incorreto', () => {
       expect(isValidCnpj('11222333000180')).toBe(false);
+    });
+  });
+
+  describe('isValidCpf (docs/13, decisão 5)', () => {
+    it('aceita um CPF válido com e sem máscara', () => {
+      expect(isValidCpf('529.982.247-25')).toBe(true);
+      expect(isValidCpf('52998224725')).toBe(true);
+    });
+
+    it('rejeita tamanho incorreto e sequência repetida', () => {
+      expect(isValidCpf('5299822472')).toBe(false);
+      expect(isValidCpf('11111111111')).toBe(false);
+    });
+
+    it('rejeita dígitos verificadores incorretos', () => {
+      expect(isValidCpf('52998224735')).toBe(false);
+      expect(isValidCpf('52998224726')).toBe(false);
+    });
+  });
+
+  describe('classifyDocument', () => {
+    it('classifica 14 dígitos válidos como CNPJ', () => {
+      expect(classifyDocument('11.222.333/0001-81')).toEqual({
+        kind: 'CNPJ',
+        digits: '11222333000181',
+      });
+    });
+
+    it('classifica 11 dígitos válidos como CPF', () => {
+      expect(classifyDocument('529.982.247-25')).toEqual({ kind: 'CPF', digits: '52998224725' });
+    });
+
+    it('devolve null para tamanho fora do padrão ou dígitos inválidos', () => {
+      expect(classifyDocument('123')).toBeNull();
+      expect(classifyDocument('11222333000191')).toBeNull();
+      expect(classifyDocument('52998224726')).toBeNull();
+    });
+  });
+
+  describe('formatDocument', () => {
+    it('formata CNPJ e CPF; devolve como está para outros tamanhos', () => {
+      expect(formatDocument('11222333000181')).toBe('11.222.333/0001-81');
+      expect(formatDocument('52998224725')).toBe('529.982.247-25');
+      expect(formatDocument('123')).toBe('123');
     });
   });
 });

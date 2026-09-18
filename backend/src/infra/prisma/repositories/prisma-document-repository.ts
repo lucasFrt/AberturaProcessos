@@ -6,6 +6,7 @@ import type {
   DocumentWithUploader,
   SoftDeleteDocumentWithHistoryInput,
 } from '@/domain/entities/document';
+import type { RecordSource } from '@/domain/enums';
 import type { DocumentRepository } from '@/domain/repositories/document-repository';
 
 const WITH_UPLOADER_INCLUDE = {
@@ -25,6 +26,8 @@ function mapDocument(row: DocumentRow): DocumentWithUploader {
     size: row.size,
     sha256: row.sha256,
     uploadedById: row.uploadedById,
+    source: row.source as RecordSource,
+    receivedAt: row.receivedAt,
     deletedAt: row.deletedAt,
     deletedById: row.deletedById,
     createdAt: row.createdAt,
@@ -92,6 +95,8 @@ export class PrismaDocumentRepository implements DocumentRepository {
             size: doc.size,
             sha256: doc.sha256,
             uploadedById: doc.uploadedById,
+            source: doc.source,
+            receivedAt: doc.receivedAt,
           },
         });
         ids.push(created.id);

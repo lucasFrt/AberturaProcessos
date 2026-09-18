@@ -1,4 +1,4 @@
-import type { HistoryAction } from '@/domain/enums';
+import type { HistoryAction, RecordSource } from '@/domain/enums';
 
 /**
  * Entidade de domínio de Process (docs/04, model Process). Espelha as
@@ -11,6 +11,13 @@ export interface Process {
   code: string;
   reference: string;
   additionalInfo: string | null;
+  /** Origem (docs/13, decisão 7): WEB (formulário), EMAIL (intake), API (chave de API em rota comum). */
+  source: RecordSource;
+  /** Solicitante informado no e-mail — texto livre, não FK em User (docs/13). */
+  requesterName: string | null;
+  requesterEmail: string | null;
+  /** Data de recebimento da solicitação (data do e-mail). `null` = igual a `createdAt`. */
+  receivedAt: Date | null;
   clientCompanyId: string;
   requestingCompanyId: string | null;
   currentStageId: string;
@@ -57,6 +64,10 @@ export interface ProcessListItem {
   currentStage: StageSummary;
   responsible: UserSummary | null;
   documentCount: number;
+  source: RecordSource;
+  requesterName: string | null;
+  requesterEmail: string | null;
+  receivedAt: Date | null;
   stageChangedAt: Date;
   completedAt: Date | null;
   createdAt: Date;
@@ -68,6 +79,8 @@ export interface ProcessDocumentSummary {
   mimeType: string;
   size: number;
   uploadedBy: UserSummary;
+  source: RecordSource;
+  receivedAt: Date | null;
   createdAt: Date;
 }
 
@@ -93,6 +106,10 @@ export interface ProcessDetail {
   currentStage: StageSummary;
   responsible: UserSummaryWithEmail | null;
   createdBy: UserSummary;
+  source: RecordSource;
+  requesterName: string | null;
+  requesterEmail: string | null;
+  receivedAt: Date | null;
   stageChangedAt: Date;
   completedAt: Date | null;
   createdAt: Date;
@@ -125,6 +142,10 @@ export function toProcessListItem(detail: ProcessDetail): ProcessListItem {
       ? { id: detail.responsible.id, name: detail.responsible.name }
       : null,
     documentCount: detail.documents.length,
+    source: detail.source,
+    requesterName: detail.requesterName,
+    requesterEmail: detail.requesterEmail,
+    receivedAt: detail.receivedAt,
     stageChangedAt: detail.stageChangedAt,
     completedAt: detail.completedAt,
     createdAt: detail.createdAt,
@@ -138,6 +159,10 @@ export interface CreateProcessWithHistoryInput {
   requestingCompanyId: string | null;
   currentStageId: string;
   createdById: string;
+  source: RecordSource;
+  requesterName: string | null;
+  requesterEmail: string | null;
+  receivedAt: Date | null;
 }
 
 export interface UpdateProcessData {

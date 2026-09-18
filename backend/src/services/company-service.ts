@@ -5,11 +5,12 @@ import type {
   CreateCompanyData,
   UpdateCompanyData,
 } from '@/domain/entities/company';
+import type { CompanyDocumentType } from '@/domain/enums';
 import { AppError, ConflictError, NotFoundError } from '@/domain/errors/app-error';
 import type { Page, PaginationParams } from '@/domain/pagination';
 import type { CompanyRepository } from '@/domain/repositories/company-repository';
 import type { OrganizationRepository } from '@/domain/repositories/organization-repository';
-import { isValidCnpj, normalizeCnpjDigits } from '@/shared/cnpj';
+import { classifyDocument, isValidCnpj, normalizeCnpjDigits } from '@/shared/cnpj';
 
 export interface CompanyServiceDeps {
   companyRepository: CompanyRepository;
@@ -126,7 +127,7 @@ export class CompanyService {
   }
 
   async create(input: CreateCompanyInput): Promise<Company> {
-    const cnpj = this.normalizeAndValidateCnpj(input.cnpj);
+    const { cnpj, documentType } = this.normalizeAndValidateDocument(input.cnpj);
 
     const organization = await this.deps.organizationRepository.findById(input.organizationId);
     if (!organization) {
@@ -140,6 +141,7 @@ export class CompanyService {
 
     const data: CreateCompanyData = {
       cnpj,
+      documentType,
       legalName: input.legalName,
       tradeName: input.tradeName ?? null,
       organizationId: input.organizationId,
@@ -168,7 +170,27 @@ export class CompanyService {
     return this.deps.companyRepository.update(id, data);
   }
 
-  /** Aceita com ou sem máscara e devolve somente dígitos (RF-12). */
+  /**
+   * CNPJ (14 dígitos) ou CPF (11 dígitos), com ou sem máscara (RF-12;
+   * docs/13, decisão 5). O código de erro distingue os dois para a UI e
+   * para o agente saberem o que corrigir.
+   */
+  private normalizeAndValidateDocument(rawValue: string): {
+    cnpj: string;
+    documentType: CompanyDocumentType;
+  } {
+    const classified = classifyDocument(rawValue);
+    if (classified) {
+      return { cnpj: classified.digits, documentType: classified.kind };
+    }
+    const digits = normalizeCnpjDigits(rawValue);
+    if (digits.length === 11) {
+      throw new AppError('INVALID_CPF', 'CPF com dígitos verificadores inválidos.', 400);
+    }
+    throw new AppError('INVALID_CNPJ', 'CNPJ com dígitos verificadores inválidos.', 400);
+  }
+
+  /** Aceita com ou sem máscara e devolve somente dígitos (RF-12). Só CNPJ: a consulta na Receita não cobre CPF. */
   private normalizeAndValidateCnpj(rawCnpj: string): string {
     const cnpj = normalizeCnpjDigits(rawCnpj);
     if (!isValidCnpj(cnpj)) {

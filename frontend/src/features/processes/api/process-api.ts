@@ -1,5 +1,17 @@
 import { api } from '@/shared/api/http-client';
 
+/**
+ * Origem de um processo/documento (docs/13, decisão 7): WEB (formulário),
+ * EMAIL (agente de e-mail), API (integração por chave de API).
+ */
+export type RecordSource = 'WEB' | 'EMAIL' | 'API';
+
+export const RECORD_SOURCE_LABELS: Record<RecordSource, string> = {
+  WEB: 'Formulário',
+  EMAIL: 'E-mail',
+  API: 'Integração',
+};
+
 /** Payloads e chamadas de `/processes` usados pelo formulário de abertura (docs/05, "Processos"). */
 
 export interface CreateProcessPayload {
@@ -73,6 +85,10 @@ export interface ProcessListItemDto {
   currentStage: StageSummaryDto;
   responsible: { id: string; name: string } | null;
   documentCount: number;
+  source: RecordSource;
+  requesterName: string | null;
+  requesterEmail: string | null;
+  receivedAt: string | null;
   stageChangedAt: string;
   completedAt: string | null;
   createdAt: string;
@@ -161,6 +177,8 @@ export interface ProcessDocumentDto {
   mimeType: string;
   size: number;
   uploadedBy: { id: string; name: string };
+  source: RecordSource;
+  receivedAt: string | null;
   createdAt: string;
   downloadUrl: string;
 }
@@ -198,6 +216,10 @@ export interface ProcessDetailDto {
   currentStage: StageSummaryDto;
   responsible: { id: string; name: string; email: string } | null;
   createdBy: { id: string; name: string };
+  source: RecordSource;
+  requesterName: string | null;
+  requesterEmail: string | null;
+  receivedAt: string | null;
   stageChangedAt: string;
   completedAt: string | null;
   createdAt: string;

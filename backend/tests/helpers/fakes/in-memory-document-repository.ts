@@ -78,6 +78,8 @@ export class InMemoryDocumentRepository implements DocumentRepository {
         size: doc.size,
         sha256: doc.sha256,
         uploadedById: doc.uploadedById,
+        source: doc.source,
+        receivedAt: doc.receivedAt,
         deletedAt: null,
         deletedById: null,
         createdAt: new Date(),

@@ -190,6 +190,34 @@ describe('Cadastros de organizações, empresas e usuários (ADMIN) — integra�
     });
   });
 
+  describe('CPF como documento da empresa (docs/13, decisão 5)', () => {
+    it('cadastra pessoa física por CPF válido com documentType = CPF', async () => {
+      const response = await request(app)
+        .post(COMPANIES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          cnpj: '529.982.247-25',
+          legalName: 'João da Silva',
+          organizationId: clientOrganizationId,
+        });
+
+      expect(response.status).toBe(201);
+      const body = response.body as { cnpj: string; documentType: string };
+      expect(body.cnpj).toBe('52998224725');
+      expect(body.documentType).toBe('CPF');
+    });
+
+    it('responde 400 INVALID_CPF para CPF com dígitos verificadores incorretos', async () => {
+      const response = await request(app)
+        .post(COMPANIES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ cnpj: '52998224726', legalName: 'X', organizationId: clientOrganizationId });
+
+      expect(response.status).toBe(400);
+      expect((response.body as { error: { code: string } }).error.code).toBe('INVALID_CPF');
+    });
+  });
+
   describe('CNPJ inválido', () => {
     it('responde 400 INVALID_CNPJ para dígitos verificadores incorretos', async () => {
       const response = await request(app)

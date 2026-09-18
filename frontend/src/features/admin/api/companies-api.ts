@@ -10,7 +10,9 @@ import type { Paginated } from '@/shared/types';
 
 export interface CompanyDto {
   id: string;
+  /** Somente dígitos: 14 (CNPJ) ou 11 (CPF) — ver `documentType`. */
   cnpj: string;
+  documentType: 'CNPJ' | 'CPF';
   legalName: string;
   tradeName: string | null;
   organizationId: string;

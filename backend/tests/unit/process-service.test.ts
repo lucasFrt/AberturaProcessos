@@ -63,6 +63,7 @@ function pushCompany(
   const company: Company = {
     id,
     cnpj,
+    documentType: 'CNPJ',
     legalName: `Empresa ${id}`,
     tradeName: null,
     organizationId,
@@ -114,6 +115,36 @@ describe('ProcessService', () => {
       expect(detail.currentStage.id).toBe(firstStageId);
       expect(detail.history).toHaveLength(1);
       expect(detail.history[0]?.action).toBe('PROCESS_CREATED');
+      // Sem origem informada, o padrão é WEB e não há solicitante (docs/13, decisão 7).
+      expect(detail.source).toBe('WEB');
+      expect(detail.requesterEmail).toBeNull();
+      expect(detail.receivedAt).toBeNull();
+    });
+
+    it('persiste origem, solicitante e data de recebimento quando informados (docs/13, decisão 7)', async () => {
+      const { service, companyRepository, processRepository, stageRepository } = buildContext();
+      const company = pushCompany(
+        companyRepository,
+        processRepository,
+        'company-1',
+        '11222333000181',
+      );
+      await pushStage(stageRepository, processRepository, 'Entrada', 0);
+      processRepository.users.push({ id: 'user-1', name: 'Agente', email: 'agente@x.com' });
+      const receivedAt = new Date('2026-09-18T10:32:00.000Z');
+
+      const detail = await service.create('user-1', ALL_SCOPE, {
+        clientCompanyId: company.id,
+        reference: 'IMP-2026-0042',
+        source: 'EMAIL',
+        requester: { name: 'João', email: 'joao@clientex.com.br' },
+        receivedAt,
+      });
+
+      expect(detail.source).toBe('EMAIL');
+      expect(detail.requesterName).toBe('João');
+      expect(detail.requesterEmail).toBe('joao@clientex.com.br');
+      expect(detail.receivedAt).toEqual(receivedAt);
     });
 
     it('gera código PRC-{ano}-00001 e o próximo é 00002', async () => {

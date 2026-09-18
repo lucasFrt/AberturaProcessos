@@ -1,7 +1,9 @@
 import {
   ACCESS_SCOPES,
   AUTH_PROVIDERS,
+  COMPANY_DOCUMENT_TYPES,
   HISTORY_ACTIONS,
+  RECORD_SOURCES,
   ROLES,
   USER_STATUSES,
 } from '@/domain/enums';
@@ -98,6 +100,22 @@ describe('Consistência entre domain/enums e as CHECK constraints do banco (inte
   it('CK_process_history_action aceita exatamente os valores de HISTORY_ACTIONS', async () => {
     const allowed = await allowedValuesForConstraint('CK_process_history_action');
     expectSameSet(allowed, HISTORY_ACTIONS, 'CK_process_history_action');
+  });
+
+  // Tarefa 24 (docs/13, decisões 5 e 7).
+  it('CK_companies_document_type aceita exatamente os valores de COMPANY_DOCUMENT_TYPES', async () => {
+    const allowed = await allowedValuesForConstraint('CK_companies_document_type');
+    expectSameSet(allowed, COMPANY_DOCUMENT_TYPES, 'CK_companies_document_type');
+  });
+
+  it('CK_processes_source aceita exatamente os valores de RECORD_SOURCES', async () => {
+    const allowed = await allowedValuesForConstraint('CK_processes_source');
+    expectSameSet(allowed, RECORD_SOURCES, 'CK_processes_source');
+  });
+
+  it('CK_documents_source aceita exatamente os valores de RECORD_SOURCES', async () => {
+    const allowed = await allowedValuesForConstraint('CK_documents_source');
+    expectSameSet(allowed, RECORD_SOURCES, 'CK_documents_source');
   });
 
   /**

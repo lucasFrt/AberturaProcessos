@@ -5,11 +5,12 @@ import { useState } from 'react';
 
 import { listOperationalUsers } from '@/features/admin/api/user-management-api';
 import type { ProcessDetailDto } from '@/features/processes/api/process-api';
+import { RECORD_SOURCE_LABELS } from '@/features/processes/api/process-api';
 import { MoveStageModal } from '@/features/processes/components/MoveStageModal';
 import { useAssignResponsible } from '@/features/processes/hooks/useAssignResponsible';
 import { useUpdateProcess } from '@/features/processes/hooks/useUpdateProcess';
 import { translateError } from '@/shared/api/errors';
-import { maskCnpj } from '@/shared/lib/cnpj';
+import { maskDocument } from '@/shared/lib/cnpj';
 import { formatDateTime } from '@/shared/lib/format';
 
 interface ProcessDataTabProps {
@@ -140,12 +141,35 @@ export function ProcessDataTab({ process }: ProcessDataTabProps): ReactElement {
       </div>
 
       <Descriptions column={1} bordered size="small">
-        <Descriptions.Item label="CNPJ Cliente">
-          {maskCnpj(process.clientCompany.cnpj)} — {process.clientCompany.legalName}
+        <Descriptions.Item label="Cliente">
+          {maskDocument(process.clientCompany.cnpj)} — {process.clientCompany.legalName}
         </Descriptions.Item>
         {process.requestingCompany && (
-          <Descriptions.Item label="CNPJ Solicitante">
-            {maskCnpj(process.requestingCompany.cnpj)} — {process.requestingCompany.legalName}
+          <Descriptions.Item label="Solicitante (empresa)">
+            {maskDocument(process.requestingCompany.cnpj)} — {process.requestingCompany.legalName}
+          </Descriptions.Item>
+        )}
+        <Descriptions.Item label="Origem">
+          <Tag color={process.source === 'EMAIL' ? 'geekblue' : 'default'}>
+            {RECORD_SOURCE_LABELS[process.source]}
+          </Tag>
+          {process.receivedAt && (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              recebido em {formatDateTime(process.receivedAt)}
+            </Typography.Text>
+          )}
+        </Descriptions.Item>
+        {(process.requesterName || process.requesterEmail) && (
+          <Descriptions.Item label="Solicitante (pessoa)">
+            {process.requesterName ?? '—'}
+            {process.requesterEmail && (
+              <>
+                {' '}
+                <Typography.Link href={`mailto:${process.requesterEmail}`}>
+                  &lt;{process.requesterEmail}&gt;
+                </Typography.Link>
+              </>
+            )}
           </Descriptions.Item>
         )}
         <Descriptions.Item label="Responsável">

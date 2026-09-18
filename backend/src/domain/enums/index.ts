@@ -32,3 +32,15 @@ export const HISTORY_ACTIONS = [
   'PROCESS_DELETED',
 ] as const;
 export type HistoryAction = (typeof HISTORY_ACTIONS)[number];
+
+/** Tipo do documento de `Company.cnpj` (docs/13, decisão 5). */
+export const COMPANY_DOCUMENT_TYPES = ['CNPJ', 'CPF'] as const;
+export type CompanyDocumentType = (typeof COMPANY_DOCUMENT_TYPES)[number];
+
+/**
+ * Origem de um processo/documento (docs/13, decisão 7). Derivada da
+ * autenticação e da rota, nunca informada pelo cliente: JWT → WEB, chave de
+ * API em rota comum → API, rota de intake → EMAIL.
+ */
+export const RECORD_SOURCES = ['WEB', 'EMAIL', 'API'] as const;
+export type RecordSource = (typeof RECORD_SOURCES)[number];

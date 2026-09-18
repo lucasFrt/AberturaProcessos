@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { paginationQuerySchema } from '@/http/schemas/pagination-schemas';
 
 export const createCompanySchema = z.object({
-  cnpj: z.string().trim().min(11, 'CNPJ inválido.').max(20),
+  /** CNPJ (14 dígitos) ou CPF (11), com ou sem máscara; os dígitos verificadores são validados no service. */
+  cnpj: z.string().trim().min(11, 'CNPJ/CPF inválido.').max(20),
   legalName: z.string().trim().min(1, 'Razão social é obrigatória.').max(255),
   tradeName: z.string().trim().max(255).optional(),
   organizationId: z.string().min(1, 'organizationId é obrigatório.'),

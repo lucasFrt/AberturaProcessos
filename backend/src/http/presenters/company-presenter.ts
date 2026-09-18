@@ -4,6 +4,7 @@ import type { CnpjLookupResult } from '@/services/company-service';
 interface CompanyDto {
   id: string;
   cnpj: string;
+  documentType: string;
   legalName: string;
   tradeName: string | null;
   organizationId: string;
@@ -18,6 +19,7 @@ export function presentCompany(company: Company): CompanyDto {
   return {
     id: company.id,
     cnpj: company.cnpj,
+    documentType: company.documentType,
     legalName: company.legalName,
     tradeName: company.tradeName,
     organizationId: company.organizationId,

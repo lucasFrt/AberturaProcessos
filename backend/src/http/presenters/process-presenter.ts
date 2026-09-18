@@ -67,6 +67,10 @@ interface ProcessListItemDto {
   currentStage: StageSummaryDto;
   responsible: UserSummaryDto | null;
   documentCount: number;
+  source: string;
+  requesterName: string | null;
+  requesterEmail: string | null;
+  receivedAt: string | null;
   stageChangedAt: string;
   completedAt: string | null;
   createdAt: string;
@@ -84,6 +88,10 @@ export function presentProcessListItem(item: ProcessListItem): ProcessListItemDt
     currentStage: presentStageSummary(item.currentStage),
     responsible: item.responsible ? presentUserSummary(item.responsible) : null,
     documentCount: item.documentCount,
+    source: item.source,
+    requesterName: item.requesterName,
+    requesterEmail: item.requesterEmail,
+    receivedAt: item.receivedAt ? item.receivedAt.toISOString() : null,
     stageChangedAt: item.stageChangedAt.toISOString(),
     completedAt: item.completedAt ? item.completedAt.toISOString() : null,
     createdAt: item.createdAt.toISOString(),
@@ -96,6 +104,8 @@ interface ProcessDocumentSummaryDto {
   mimeType: string;
   size: number;
   uploadedBy: UserSummaryDto;
+  source: string;
+  receivedAt: string | null;
   createdAt: string;
   downloadUrl: string;
 }
@@ -107,6 +117,8 @@ function presentDocumentSummary(doc: ProcessDocumentSummary): ProcessDocumentSum
     mimeType: doc.mimeType,
     size: doc.size,
     uploadedBy: presentUserSummary(doc.uploadedBy),
+    source: doc.source,
+    receivedAt: doc.receivedAt ? doc.receivedAt.toISOString() : null,
     createdAt: doc.createdAt.toISOString(),
     downloadUrl: `/api/v1/documents/${doc.id}/download`,
   };
@@ -156,6 +168,10 @@ interface ProcessDetailDto {
   currentStage: StageSummaryDto;
   responsible: UserSummaryWithEmailDto | null;
   createdBy: UserSummaryDto;
+  source: string;
+  requesterName: string | null;
+  requesterEmail: string | null;
+  receivedAt: string | null;
   stageChangedAt: string;
   completedAt: string | null;
   createdAt: string;
@@ -181,6 +197,10 @@ export function presentProcessDetail(
     currentStage: presentStageSummary(detail.currentStage),
     responsible: detail.responsible ? presentUserSummaryWithEmail(detail.responsible) : null,
     createdBy: presentUserSummary(detail.createdBy),
+    source: detail.source,
+    requesterName: detail.requesterName,
+    requesterEmail: detail.requesterEmail,
+    receivedAt: detail.receivedAt ? detail.receivedAt.toISOString() : null,
     stageChangedAt: detail.stageChangedAt.toISOString(),
     completedAt: detail.completedAt ? detail.completedAt.toISOString() : null,
     createdAt: detail.createdAt.toISOString(),

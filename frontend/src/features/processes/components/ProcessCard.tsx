@@ -1,10 +1,10 @@
-import { FileOutlined } from '@ant-design/icons';
+import { FileOutlined, MailOutlined } from '@ant-design/icons';
 import { Avatar, Card, Flex, Tag, Tooltip, Typography } from 'antd';
 import type { ReactElement } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import type { ProcessListItemDto } from '@/features/processes/api/process-api';
-import { maskCnpj } from '@/shared/lib/cnpj';
+import { maskDocument } from '@/shared/lib/cnpj';
 import { formatRelativeTime } from '@/shared/lib/format';
 
 /**
@@ -64,7 +64,22 @@ export function ProcessCard({ process }: ProcessCardProps): ReactElement {
           {process.reference}
         </Typography.Paragraph>
 
-        <Tag>{maskCnpj(process.clientCompany.cnpj)}</Tag>
+        <Flex gap={4} wrap>
+          <Tag>{maskDocument(process.clientCompany.cnpj)}</Tag>
+          {process.source === 'EMAIL' && (
+            <Tooltip
+              title={
+                process.requesterEmail
+                  ? `Aberto por e-mail — ${process.requesterName ?? ''} <${process.requesterEmail}>`
+                  : 'Aberto por e-mail'
+              }
+            >
+              <Tag color="geekblue" icon={<MailOutlined aria-hidden />}>
+                e-mail
+              </Tag>
+            </Tooltip>
+          )}
+        </Flex>
 
         <Flex justify="space-between" align="center">
           <Tooltip title={process.responsible?.name ?? 'Sem responsável'}>

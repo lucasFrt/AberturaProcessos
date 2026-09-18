@@ -66,6 +66,39 @@ describe('CompanyService', () => {
       ).rejects.toMatchObject({ code: 'INVALID_CNPJ', status: 400 });
     });
 
+    it('cria empresa com CPF válido marcando documentType = CPF (docs/13, decisão 5)', async () => {
+      const { service, organizationId } = buildContext();
+
+      const company = await service.create({
+        cnpj: '529.982.247-25',
+        legalName: 'João da Silva',
+        organizationId,
+      });
+
+      expect(company.cnpj).toBe('52998224725');
+      expect(company.documentType).toBe('CPF');
+    });
+
+    it('CNPJ válido fica com documentType = CNPJ', async () => {
+      const { service, organizationId } = buildContext();
+
+      const company = await service.create({
+        cnpj: '11222333000181',
+        legalName: 'Empresa',
+        organizationId,
+      });
+
+      expect(company.documentType).toBe('CNPJ');
+    });
+
+    it('rejeita CPF com dígitos verificadores inválidos com 400 INVALID_CPF', async () => {
+      const { service, organizationId } = buildContext();
+
+      await expect(
+        service.create({ cnpj: '52998224726', legalName: 'X', organizationId }),
+      ).rejects.toMatchObject({ code: 'INVALID_CPF', status: 400 });
+    });
+
     it('rejeita organização inexistente com 404', async () => {
       const { service } = buildContext();
 

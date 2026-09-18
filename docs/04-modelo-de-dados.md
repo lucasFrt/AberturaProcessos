@@ -153,6 +153,14 @@ export const HISTORY_ACTIONS = [
   'PROCESS_DELETED',
 ] as const;
 export type HistoryAction = (typeof HISTORY_ACTIONS)[number];
+
+/** Tipo do documento de `Company.cnpj` (docs/13, decisão 5). */
+export const COMPANY_DOCUMENT_TYPES = ['CNPJ', 'CPF'] as const;
+export type CompanyDocumentType = (typeof COMPANY_DOCUMENT_TYPES)[number];
+
+/** Origem de processo/documento (docs/13, decisão 7): derivada da credencial/rota, nunca do payload. */
+export const RECORD_SOURCES = ['WEB', 'EMAIL', 'API'] as const;
+export type RecordSource = (typeof RECORD_SOURCES)[number];
 ```
 
 Esses arrays são a fonte única: alimentam os schemas Zod (`z.enum(ROLES)`), a tipagem do domínio e
@@ -211,8 +219,10 @@ model EmailDomain {
 /// CNPJ (matriz ou filial).
 model Company {
   id             String   @id @default(cuid()) @db.NVarChar(30)
-  /// somente dígitos, 14 posições
+  /// somente dígitos: 14 (CNPJ) ou 11 (CPF). Nome da coluna é histórico; `documentType` diz o que ela contém.
   cnpj           String   @unique @db.NVarChar(14)
+  /// CNPJ | CPF
+  documentType   String   @default("CNPJ") @db.NVarChar(10)
   legalName      String   @db.NVarChar(255)
   tradeName      String?  @db.NVarChar(255)
   organizationId String   @db.NVarChar(30)
@@ -357,6 +367,13 @@ model Process {
   reference           String    @db.NVarChar(255)
   /// Campo livre longo
   additionalInfo      String?   @db.NVarChar(Max)
+  /// WEB | EMAIL | API — derivado da autenticação/rota (docs/13, decisão 7)
+  source              String    @default("WEB") @db.NVarChar(10)
+  /// Solicitante informado no e-mail (texto livre, não FK em User)
+  requesterName       String?   @db.NVarChar(200)
+  requesterEmail      String?   @db.NVarChar(255)
+  /// Data de recebimento da solicitação (data do e-mail). null = igual a createdAt
+  receivedAt          DateTime?
   /// CNPJ para quem o processo é aberto
   clientCompanyId     String    @db.NVarChar(30)
   /// CNPJ que solicitou (modelo trading). null = igual ao clientCompanyId
@@ -431,6 +448,10 @@ model Document {
   size         Int
   sha256       String    @db.NVarChar(64)
   uploadedById String    @db.NVarChar(30)
+  /// WEB | EMAIL | API (docs/13, decisão 7)
+  source       String    @default("WEB") @db.NVarChar(10)
+  /// Data de recebimento (data do e-mail). null = igual a createdAt
+  receivedAt   DateTime?
   deletedAt    DateTime?
   deletedById  String?   @db.NVarChar(30)
   createdAt    DateTime  @default(now())
@@ -469,7 +490,22 @@ ALTER TABLE [process_history] ADD CONSTRAINT [CK_process_history_action]
   CHECK ([action] IN ('PROCESS_CREATED','PROCESS_UPDATED','STAGE_CHANGED',
                       'RESPONSIBLE_CHANGED','DOCUMENT_ADDED','DOCUMENT_REMOVED',
                       'PROCESS_DELETED'));
+
+-- Fase 7 (docs/13), migration 20260918193500_add_check_constraints_source_document_type
+ALTER TABLE [companies] ADD CONSTRAINT [CK_companies_document_type]
+  CHECK ([documentType] IN ('CNPJ','CPF'));
+
+ALTER TABLE [processes] ADD CONSTRAINT [CK_processes_source]
+  CHECK ([source] IN ('WEB','EMAIL','API'));
+
+ALTER TABLE [documents] ADD CONSTRAINT [CK_documents_source]
+  CHECK ([source] IN ('WEB','EMAIL','API'));
 ```
+
+> **Por que a CHECK constraint fica em migration separada da que cria a coluna:** o SQL Server
+> compila o batch inteiro antes de executar, então `ALTER TABLE ... ADD [col]` seguido de
+> `ADD CONSTRAINT ... CHECK ([col] ...)` no mesmo arquivo falha com "Invalid column name".
+> Mesmo motivo de `add_check_constraints` ser separada da `init`.
 
 Ao adicionar um valor novo em `domain/enums`, a constraint correspondente precisa ser atualizada por
 nova migration. Um teste de integração deve percorrer os arrays de `enums` e conferir que todos os

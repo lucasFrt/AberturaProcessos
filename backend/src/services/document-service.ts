@@ -1,6 +1,6 @@
 import type { AccessScope } from '@/domain/entities/access-scope';
 import type { CreateDocumentData, DocumentWithUploader } from '@/domain/entities/document';
-import type { Role } from '@/domain/enums';
+import type { RecordSource, Role } from '@/domain/enums';
 import { ForbiddenError, NotFoundError, ValidationError } from '@/domain/errors/app-error';
 import type { RealtimeProvider } from '@/domain/realtime/realtime-provider';
 import type { DocumentRepository } from '@/domain/repositories/document-repository';
@@ -20,6 +20,13 @@ export interface UploadFileInput {
   originalName: string;
   mimeType: string;
   buffer: Buffer;
+  /** Data de recebimento (e-mail). Ausente = agora (`createdAt`). */
+  receivedAt?: Date | null | undefined;
+}
+
+export interface UploadOptions {
+  /** Origem dos documentos (docs/13, decisão 7). Padrão: WEB. */
+  source?: RecordSource | undefined;
 }
 
 /**
@@ -41,6 +48,7 @@ export class DocumentService {
     actorId: string,
     scope: AccessScope,
     files: UploadFileInput[],
+    options: UploadOptions = {},
   ): Promise<DocumentWithUploader[]> {
     const process = await this.deps.processRepository.findRawById(processId, scope);
     if (!process) {
@@ -75,6 +83,8 @@ export class DocumentService {
       size: saved.size,
       sha256: saved.sha256,
       uploadedById: actorId,
+      source: options.source ?? 'WEB',
+      receivedAt: file.receivedAt ?? null,
     }));
 
     const created = await this.deps.documentRepository.createManyWithHistory({

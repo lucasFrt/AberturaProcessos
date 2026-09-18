@@ -109,6 +109,7 @@ describe('UserManagementService', () => {
       const { service, userRepository, companyRepository, organizationId } = buildContext();
       const company = await companyRepository.create({
         cnpj: '11222333000181',
+        documentType: 'CNPJ',
         legalName: 'Empresa',
         tradeName: null,
         organizationId,
@@ -324,6 +325,7 @@ describe('UserManagementService', () => {
       const { service, userRepository, companyRepository, organizationId } = buildContext();
       const company = await companyRepository.create({
         cnpj: '11222333000181',
+        documentType: 'CNPJ',
         legalName: 'Empresa',
         tradeName: null,
         organizationId,

@@ -49,8 +49,11 @@ model EmailDomain {
 /// CNPJ (matriz ou filial).
 model Company {
   id             String   @id @default(cuid()) @db.NVarChar(30)
-  /// somente dígitos, 14 posições
+  /// somente dígitos: 14 posições (CNPJ) ou 11 (CPF). O nome da coluna é
+  /// histórico; `documentType` diz o que ela contém (docs/13, decisão 5).
   cnpj           String   @unique @db.NVarChar(14)
+  /// CNPJ | CPF
+  documentType   String   @default("CNPJ") @db.NVarChar(10)
   legalName      String   @db.NVarChar(255)
   tradeName      String?  @db.NVarChar(255)
   organizationId String   @db.NVarChar(30)
@@ -219,6 +222,13 @@ model Process {
   reference           String    @db.NVarChar(255)
   /// Campo livre longo
   additionalInfo      String?   @db.NVarChar(Max)
+  /// WEB | EMAIL | API — derivado da autenticação/rota, nunca do payload (docs/13, decisão 7)
+  source              String    @default("WEB") @db.NVarChar(10)
+  /// Quem pediu a abertura, quando veio por e-mail (docs/13). Texto livre, não FK em User.
+  requesterName       String?   @db.NVarChar(200)
+  requesterEmail      String?   @db.NVarChar(255)
+  /// Quando a solicitação foi recebida (data do e-mail). null = igual a createdAt.
+  receivedAt          DateTime?
   /// CNPJ para quem o processo é aberto
   clientCompanyId     String    @db.NVarChar(30)
   /// CNPJ que solicitou (modelo trading). null = igual ao clientCompanyId
@@ -293,6 +303,10 @@ model Document {
   size         Int
   sha256       String    @db.NVarChar(64)
   uploadedById String    @db.NVarChar(30)
+  /// WEB | EMAIL | API (docs/13, decisão 7)
+  source       String    @default("WEB") @db.NVarChar(10)
+  /// Quando o documento foi recebido (data do e-mail). null = igual a createdAt.
+  receivedAt   DateTime?
   deletedAt    DateTime?
   deletedById  String?   @db.NVarChar(30)
   createdAt    DateTime  @default(now())
