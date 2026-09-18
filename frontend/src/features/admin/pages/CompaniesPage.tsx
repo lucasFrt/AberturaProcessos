@@ -1,21 +1,42 @@
-import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
+import {
+  DeleteOutlined,
+  EditOutlined,
+  LoadingOutlined,
+  PlusOutlined,
+  SearchOutlined,
+} from '@ant-design/icons';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { App, Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag } from 'antd';
+import {
+  Alert,
+  App,
+  Button,
+  Divider,
+  Form,
+  Input,
+  Modal,
+  Popconfirm,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Tooltip,
+} from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { ReactElement } from 'react';
-import { useState } from 'react';
-import { Controller, useForm } from 'react-hook-form';
+import { useEffect, useRef, useState } from 'react';
+import { Controller, useForm, useWatch } from 'react-hook-form';
 import { z } from 'zod';
 
 import {
   createCompany,
   deleteCompany,
   listCompanies,
+  lookupCnpj,
   updateCompany,
 } from '@/features/admin/api/companies-api';
 import type { CompanyDto } from '@/features/admin/api/companies-api';
-import { listOrganizations } from '@/features/admin/api/organizations-api';
+import { createOrganization, listOrganizations } from '@/features/admin/api/organizations-api';
 import { translateError } from '@/shared/api/errors';
 import { Can } from '@/shared/components/Can';
 import { PageHeader } from '@/shared/components/PageHeader';
@@ -75,6 +96,27 @@ export function CompaniesPage(): ReactElement {
 
   const orgOptions = (orgsData?.data ?? []).map((o) => ({ value: o.id, label: o.name }));
 
+  // --- Criação rápida de organização, sem saltar para a tela de Administração ---
+
+  const [newOrgName, setNewOrgName] = useState('');
+
+  const createOrgMutation = useMutation({
+    mutationFn: () => createOrganization({ name: newOrgName.trim() }),
+    onSuccess: (organization) => {
+      void queryClient.invalidateQueries({ queryKey: ['organizations', 'all-for-select'] });
+      setValue('organizationId', organization.id, { shouldValidate: true });
+      setNewOrgName('');
+      void message.success('Organização criada.');
+    },
+    onError: (error) => void message.error(translateError(error)),
+  });
+
+  function submitNewOrganization(): void {
+    const name = newOrgName.trim();
+    if (!name || createOrgMutation.isPending) return;
+    createOrgMutation.mutate();
+  }
+
   const createMutation = useMutation({
     mutationFn: createCompany,
     onSuccess: () => {
@@ -117,32 +159,126 @@ export function CompaniesPage(): ReactElement {
     control,
     handleSubmit,
     reset,
+    setValue,
     formState: { errors },
   } = useForm<CompanyFormValues>({
     resolver: zodResolver(companySchema),
     defaultValues: { cnpj: '', legalName: '', tradeName: '', organizationId: '' },
   });
 
+  // --- Autopreenchimento pela Receita Federal ---
+
+  const [lookupNotice, setLookupNotice] = useState<{
+    type: 'success' | 'warning';
+    text: string;
+  } | null>(null);
+
+  /**
+   * Último CNPJ já consultado. Sem isso, o efeito abaixo refaz a consulta a
+   * cada re-render enquanto o campo continuar válido — e a cota do plano
+   * gratuito é de 3 consultas por minuto.
+   */
+  const lastLookedUpRef = useRef<string | null>(null);
+
+  const { mutate: runCnpjLookup, isPending: isLookingUp } = useMutation({
+    mutationFn: lookupCnpj,
+    onSuccess: (result) => {
+      setValue('legalName', result.legalName, { shouldValidate: true });
+      setValue('tradeName', result.tradeName ?? '');
+
+      if (result.alreadyRegistered) {
+        setLookupNotice({
+          type: 'warning',
+          text: 'Este CNPJ já está cadastrado. Os dados exibidos vieram do próprio sistema.',
+        });
+        return;
+      }
+
+      const status = result.registrationStatus;
+      if (status && status.toUpperCase() !== 'ATIVA') {
+        setLookupNotice({
+          type: 'warning',
+          text: `Dados preenchidos pela Receita Federal. Atenção: situação cadastral "${status}".`,
+        });
+        return;
+      }
+
+      // A própria Receita não tem nome fantasia para uma parte das empresas
+      // (comum em CNPJs mais antigos ou que nunca registraram um): sem este
+      // aviso, o campo vazio pareceria falha da consulta em vez de dado
+      // realmente ausente na fonte.
+      setLookupNotice(
+        result.tradeName
+          ? { type: 'success', text: 'Dados preenchidos pela Receita Federal.' }
+          : {
+              type: 'success',
+              text: 'Dados preenchidos pela Receita Federal. Esta empresa não tem nome fantasia registrado — o campo pode ficar em branco ou ser preenchido manualmente.',
+            },
+      );
+    },
+    onError: (error) => setLookupNotice({ type: 'warning', text: translateError(error) }),
+  });
+
+  const cnpjValue = useWatch({ control, name: 'cnpj' });
+
+  // Dispara sozinho quando o CNPJ fica completo e válido: é o que evita
+  // digitar razão social e nome fantasia à mão. Na edição o campo é somente
+  // leitura, então não há o que consultar.
+  useEffect(() => {
+    if (!modalOpen || editingCompany) return;
+
+    const digits = normalizeCnpjDigits(cnpjValue ?? '');
+    if (digits.length !== 14 || !isValidCnpj(digits)) {
+      lastLookedUpRef.current = null;
+      return;
+    }
+    if (lastLookedUpRef.current === digits) return;
+
+    lastLookedUpRef.current = digits;
+    runCnpjLookup(digits);
+  }, [cnpjValue, modalOpen, editingCompany, runCnpjLookup]);
+
+  /**
+   * Retentativa manual. Necessária porque o efeito acima só dispara na
+   * transição para "CNPJ válido": depois de um 429 (limite de 3/min), o
+   * usuário precisa de um jeito de repetir a mesma consulta.
+   */
+  function retryCnpjLookup(): void {
+    const digits = normalizeCnpjDigits(cnpjValue ?? '');
+    if (digits.length !== 14 || !isValidCnpj(digits)) return;
+    lastLookedUpRef.current = digits;
+    runCnpjLookup(digits);
+  }
+
+  function resetLookupState(): void {
+    setLookupNotice(null);
+    lastLookedUpRef.current = null;
+  }
+
   function openCreate(): void {
     setEditingCompany(null);
     reset({ cnpj: '', legalName: '', tradeName: '', organizationId: '' });
+    resetLookupState();
     setModalOpen(true);
   }
 
   function openEdit(company: CompanyDto): void {
     setEditingCompany(company);
     reset({
-      cnpj: company.cnpj,
+      // A API devolve só dígitos; o formulário exibe com máscara.
+      cnpj: maskCnpj(company.cnpj),
       legalName: company.legalName,
       tradeName: company.tradeName ?? '',
       organizationId: company.organizationId,
     });
+    resetLookupState();
     setModalOpen(true);
   }
 
   function closeModal(): void {
     setModalOpen(false);
     setEditingCompany(null);
+    resetLookupState();
   }
 
   function onSubmit(values: CompanyFormValues): void {
@@ -277,6 +413,11 @@ export function CompaniesPage(): ReactElement {
             required
             validateStatus={errors.cnpj ? 'error' : ''}
             help={errors.cnpj?.message}
+            extra={
+              editingCompany
+                ? undefined
+                : 'Digite o CNPJ completo: a razão social e o nome fantasia são buscados na Receita Federal.'
+            }
           >
             <Controller
               name="cnpj"
@@ -284,12 +425,39 @@ export function CompaniesPage(): ReactElement {
               render={({ field }) => (
                 <Input
                   {...field}
+                  onChange={(event) => field.onChange(maskCnpj(event.target.value))}
                   placeholder="00.000.000/0000-00"
+                  inputMode="numeric"
                   disabled={editingCompany !== null}
+                  suffix={
+                    editingCompany ? null : isLookingUp ? (
+                      <LoadingOutlined aria-label="Consultando CNPJ na Receita Federal" />
+                    ) : (
+                      <Tooltip title="Consultar CNPJ na Receita Federal">
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<SearchOutlined />}
+                          onClick={retryCnpjLookup}
+                          aria-label="Consultar CNPJ na Receita Federal"
+                        />
+                      </Tooltip>
+                    )
+                  }
                 />
               )}
             />
           </Form.Item>
+          {lookupNotice ? (
+            <Alert
+              type={lookupNotice.type === 'success' ? 'success' : 'warning'}
+              message={lookupNotice.text}
+              showIcon
+              closable
+              onClose={() => setLookupNotice(null)}
+              style={{ marginBottom: 16 }}
+            />
+          ) : null}
           <Form.Item
             label="Razão social"
             required
@@ -299,7 +467,9 @@ export function CompaniesPage(): ReactElement {
             <Controller
               name="legalName"
               control={control}
-              render={({ field }) => <Input {...field} placeholder="Razão social" />}
+              render={({ field }) => (
+                <Input {...field} placeholder="Preenchido pela consulta do CNPJ" />
+              )}
             />
           </Form.Item>
           <Form.Item label="Nome fantasia">
@@ -327,6 +497,34 @@ export function CompaniesPage(): ReactElement {
                   filterOption={(input, option) =>
                     (option?.label as string).toLowerCase().includes(input.toLowerCase())
                   }
+                  popupRender={(menu) => (
+                    <>
+                      {menu}
+                      <Divider style={{ margin: '8px 0' }} />
+                      <Space style={{ padding: '0 8px 8px', width: '100%' }}>
+                        <Input
+                          placeholder="Nova organização"
+                          value={newOrgName}
+                          onChange={(event) => setNewOrgName(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              submitNewOrganization();
+                            }
+                          }}
+                        />
+                        <Button
+                          type="text"
+                          icon={<PlusOutlined />}
+                          loading={createOrgMutation.isPending}
+                          onClick={submitNewOrganization}
+                          disabled={!newOrgName.trim()}
+                        >
+                          Adicionar
+                        </Button>
+                      </Space>
+                    </>
+                  )}
                 />
               )}
             />

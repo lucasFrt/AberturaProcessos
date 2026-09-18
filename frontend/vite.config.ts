@@ -14,8 +14,12 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': { target: 'http://localhost:3000', changeOrigin: true },
-      '/socket.io': { target: 'http://localhost:3000', ws: true },
+      // Target em 127.0.0.1, nunca `localhost`: a API faz bind explícito em
+      // 127.0.0.1 (backend/src/http/server.ts) e no Windows `localhost`
+      // resolve `::1` antes de `127.0.0.1`, o que derruba o proxy com
+      // ECONNREFUSED ::1:3000.
+      '/api': { target: 'http://127.0.0.1:3000', changeOrigin: true },
+      '/socket.io': { target: 'http://127.0.0.1:3000', ws: true },
     },
   },
 });

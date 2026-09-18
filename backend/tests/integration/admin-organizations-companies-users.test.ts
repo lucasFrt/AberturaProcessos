@@ -207,6 +207,122 @@ describe('Cadastros de organizações, empresas e usuários (ADMIN) — integra�
     });
   });
 
+  /**
+   * A suíte roda com `CNPJ_LOOKUP_ENABLED=false` (`.env.test`) para não
+   * depender de API externa (docs/09). Isso cobre justamente os caminhos que
+   * não chamam o provedor: validação, escopo por papel, curto-circuito quando
+   * a empresa já existe e a resposta de "consulta desligada". O caminho de
+   * sucesso (dados vindos da Receita) é coberto em
+   * `tests/unit/company-service.test.ts` com o fake do provider.
+   */
+  describe('GET /companies inclui a organização vinculada', () => {
+    it('devolve organization: { id, name } em cada empresa da listagem', async () => {
+      const createResponse = await request(app)
+        .post(COMPANIES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          cnpj: VALID_CNPJ_1,
+          legalName: 'Empresa Com Organização',
+          organizationId: clientOrganizationId,
+        });
+      expect(createResponse.status).toBe(201);
+
+      const listResponse = await request(app)
+        .get(COMPANIES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(listResponse.status).toBe(200);
+      const body = listResponse.body as {
+        data: { cnpj: string; organization?: { id: string; name: string } }[];
+      };
+      const company = body.data.find((item) => item.cnpj === '11222333000181');
+      expect(company?.organization).toEqual({
+        id: clientOrganizationId,
+        name: 'Cliente Teste',
+      });
+    });
+  });
+
+  describe('Consulta de CNPJ para autopreenchimento', () => {
+    it('responde 400 INVALID_CNPJ para dígitos verificadores incorretos', async () => {
+      const response = await request(app)
+        .get(`${COMPANIES_BASE}/lookup/11222333000180`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(400);
+      const body = response.body as { error: { code: string } };
+      expect(body.error.code).toBe('INVALID_CNPJ');
+    });
+
+    it('devolve os dados do próprio banco quando o CNPJ já está cadastrado', async () => {
+      const createResponse = await request(app)
+        .post(COMPANIES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          cnpj: VALID_CNPJ_1,
+          legalName: 'Empresa Já Cadastrada LTDA',
+          tradeName: 'Já Cadastrada',
+          organizationId: clientOrganizationId,
+        });
+      const created = createResponse.body as { id: string };
+
+      const response = await request(app)
+        .get(`${COMPANIES_BASE}/lookup/11222333000181`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(200);
+      const body = response.body as {
+        cnpj: string;
+        legalName: string;
+        tradeName: string | null;
+        registrationStatus: string | null;
+        alreadyRegistered: boolean;
+        companyId: string;
+        organizationId: string;
+      };
+      expect(body).toEqual({
+        cnpj: '11222333000181',
+        legalName: 'Empresa Já Cadastrada LTDA',
+        tradeName: 'Já Cadastrada',
+        registrationStatus: null,
+        alreadyRegistered: true,
+        companyId: created.id,
+        organizationId: clientOrganizationId,
+      });
+    });
+
+    it('responde 503 CNPJ_LOOKUP_DISABLED quando a consulta externa está desligada', async () => {
+      const response = await request(app)
+        .get(`${COMPANIES_BASE}/lookup/11444777000161`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(503);
+      const body = response.body as { error: { code: string } };
+      expect(body.error.code).toBe('CNPJ_LOOKUP_DISABLED');
+    });
+
+    it('responde 403 para papel não-ADMIN', async () => {
+      const operationalToken = await createOperationalAndLogin(
+        app,
+        'operacional-lookup@opusce-teste.com.br',
+      );
+
+      const response = await request(app)
+        .get(`${COMPANIES_BASE}/lookup/11444777000161`)
+        .set('Authorization', `Bearer ${operationalToken}`);
+
+      expect(response.status).toBe(403);
+      const body = response.body as { error: { code: string } };
+      expect(body.error.code).toBe('FORBIDDEN');
+    });
+
+    it('responde 401 sem autenticação', async () => {
+      const response = await request(app).get(`${COMPANIES_BASE}/lookup/11444777000161`);
+
+      expect(response.status).toBe(401);
+    });
+  });
+
   describe('Exclusão com vínculo', () => {
     it('responde 409 ao excluir empresa com processo vinculado', async () => {
       const companyResponse = await request(app)

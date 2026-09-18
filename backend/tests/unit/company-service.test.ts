@@ -1,3 +1,4 @@
+import { FakeCnpjLookupProvider } from '../helpers/fakes/fake-cnpj-lookup-provider';
 import { InMemoryCompanyRepository } from '../helpers/fakes/in-memory-company-repository';
 import { InMemoryOrganizationRepository } from '../helpers/fakes/in-memory-organization-repository';
 
@@ -7,15 +8,21 @@ import { CompanyService } from '@/services/company-service';
 const VALID_CNPJ = '11222333000181';
 const VALID_CNPJ_2 = '11444777000161';
 
-function buildContext(): {
+function buildContext(options: { cnpjLookupEnabled?: boolean } = {}): {
   service: CompanyService;
   companyRepository: InMemoryCompanyRepository;
   organizationRepository: InMemoryOrganizationRepository;
+  cnpjLookupProvider: FakeCnpjLookupProvider;
   organizationId: string;
 } {
   const companyRepository = new InMemoryCompanyRepository();
   const organizationRepository = new InMemoryOrganizationRepository();
-  const service = new CompanyService({ companyRepository, organizationRepository });
+  const cnpjLookupProvider = new FakeCnpjLookupProvider();
+  const service = new CompanyService({
+    companyRepository,
+    organizationRepository,
+    cnpjLookupProvider: options.cnpjLookupEnabled === false ? null : cnpjLookupProvider,
+  });
 
   const organizationId = 'org-1';
   organizationRepository.items.push({
@@ -26,8 +33,15 @@ function buildContext(): {
     createdAt: new Date(),
     updatedAt: new Date(),
   });
+  companyRepository.organizationNames.set(organizationId, 'Cliente X');
 
-  return { service, companyRepository, organizationRepository, organizationId };
+  return {
+    service,
+    companyRepository,
+    organizationRepository,
+    cnpjLookupProvider,
+    organizationId,
+  };
 }
 
 describe('CompanyService', () => {
@@ -79,6 +93,18 @@ describe('CompanyService', () => {
       });
 
       expect(first.id).not.toBe(second.id);
+    });
+  });
+
+  describe('list', () => {
+    it('inclui o nome da organização em cada empresa (coluna "Organização" da tela de admin)', async () => {
+      const { service, organizationId } = buildContext();
+      await service.create({ cnpj: VALID_CNPJ, legalName: 'Empresa', organizationId });
+
+      const page = await service.list({}, { page: 1, pageSize: 20 });
+
+      expect(page.items).toHaveLength(1);
+      expect(page.items[0]?.organization).toEqual({ id: organizationId, name: 'Cliente X' });
     });
   });
 
@@ -136,6 +162,111 @@ describe('CompanyService', () => {
         code: 'CONFLICT',
         status: 409,
         details: { processCount: 3 },
+      });
+    });
+  });
+
+  describe('lookupCnpj', () => {
+    it('devolve os dados da Receita para um CNPJ não cadastrado', async () => {
+      const { service, cnpjLookupProvider } = buildContext();
+      cnpjLookupProvider.respondFound({
+        cnpj: VALID_CNPJ,
+        legalName: 'Saint Pauls Importacao LTDA',
+        tradeName: 'Saint Pauls',
+        registrationStatus: 'ATIVA',
+      });
+
+      const result = await service.lookupCnpj('11.222.333/0001-81');
+
+      expect(result).toEqual({
+        cnpj: VALID_CNPJ,
+        legalName: 'Saint Pauls Importacao LTDA',
+        tradeName: 'Saint Pauls',
+        registrationStatus: 'ATIVA',
+        alreadyRegistered: false,
+        companyId: null,
+        organizationId: null,
+      });
+    });
+
+    it('normaliza a máscara antes de consultar o provedor', async () => {
+      const { service, cnpjLookupProvider } = buildContext();
+      cnpjLookupProvider.respondFound({ cnpj: VALID_CNPJ, legalName: 'Empresa' });
+
+      await service.lookupCnpj('11.222.333/0001-81');
+
+      expect(cnpjLookupProvider.calls).toEqual([VALID_CNPJ]);
+    });
+
+    it('rejeita CNPJ inválido com 400 sem consultar o provedor', async () => {
+      const { service, cnpjLookupProvider } = buildContext();
+
+      await expect(service.lookupCnpj('11222333000180')).rejects.toMatchObject({
+        code: 'INVALID_CNPJ',
+        status: 400,
+      });
+      // Cota do plano gratuito é de 3 consultas/min: não se gasta uma com
+      // CNPJ que já sabemos ser inválido.
+      expect(cnpjLookupProvider.calls).toEqual([]);
+    });
+
+    it('devolve os dados do próprio banco, sem consultar o provedor, quando o CNPJ já existe', async () => {
+      const { service, cnpjLookupProvider, organizationId } = buildContext();
+      const existing = await service.create({
+        cnpj: VALID_CNPJ,
+        legalName: 'Já Cadastrada LTDA',
+        tradeName: 'Já Cadastrada',
+        organizationId,
+      });
+
+      const result = await service.lookupCnpj(VALID_CNPJ);
+
+      expect(result).toMatchObject({
+        alreadyRegistered: true,
+        companyId: existing.id,
+        organizationId,
+        legalName: 'Já Cadastrada LTDA',
+        tradeName: 'Já Cadastrada',
+      });
+      expect(cnpjLookupProvider.calls).toEqual([]);
+    });
+
+    it('traduz NOT_FOUND do provedor em 404 CNPJ_NOT_FOUND', async () => {
+      const { service, cnpjLookupProvider } = buildContext();
+      cnpjLookupProvider.outcome = { kind: 'NOT_FOUND' };
+
+      await expect(service.lookupCnpj(VALID_CNPJ_2)).rejects.toMatchObject({
+        code: 'CNPJ_NOT_FOUND',
+        status: 404,
+      });
+    });
+
+    it('traduz RATE_LIMITED do provedor em 429 CNPJ_LOOKUP_RATE_LIMITED', async () => {
+      const { service, cnpjLookupProvider } = buildContext();
+      cnpjLookupProvider.outcome = { kind: 'RATE_LIMITED' };
+
+      await expect(service.lookupCnpj(VALID_CNPJ_2)).rejects.toMatchObject({
+        code: 'CNPJ_LOOKUP_RATE_LIMITED',
+        status: 429,
+      });
+    });
+
+    it('traduz UNAVAILABLE do provedor em 503 CNPJ_LOOKUP_UNAVAILABLE', async () => {
+      const { service, cnpjLookupProvider } = buildContext();
+      cnpjLookupProvider.outcome = { kind: 'UNAVAILABLE', reason: 'Timeout.' };
+
+      await expect(service.lookupCnpj(VALID_CNPJ_2)).rejects.toMatchObject({
+        code: 'CNPJ_LOOKUP_UNAVAILABLE',
+        status: 503,
+      });
+    });
+
+    it('responde 503 CNPJ_LOOKUP_DISABLED quando a consulta está desabilitada', async () => {
+      const { service } = buildContext({ cnpjLookupEnabled: false });
+
+      await expect(service.lookupCnpj(VALID_CNPJ_2)).rejects.toMatchObject({
+        code: 'CNPJ_LOOKUP_DISABLED',
+        status: 503,
       });
     });
   });

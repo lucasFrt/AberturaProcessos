@@ -100,6 +100,21 @@ export const envSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASSWORD: z.string().optional(),
   MAIL_FROM: z.string().min(1).default('Abertura de Processos <nao-responda@opusce.com.br>'),
+
+  // ── Consulta de CNPJ na Receita (docs/05, "Empresas / CNPJs") ─
+  // Nomes genéricos (CNPJ_LOOKUP_*, não RECEITAWS_*) porque o provedor é
+  // detalhe de infraestrutura atrás de `CnpjLookupProvider`: trocar para
+  // BrasilAPI/cnpj.ws não deve exigir renomear variáveis de ambiente.
+  // Desligado (`false`) a consulta responde 503 CNPJ_LOOKUP_DISABLED e o
+  // cadastro manual continua funcionando — é assim que os testes de
+  // integração rodam sem tocar a rede.
+  CNPJ_LOOKUP_ENABLED: booleanFromEnv(true),
+  CNPJ_LOOKUP_BASE_URL: z.string().url().default('https://receitaws.com.br/v1'),
+  /** Token do plano comercial. Vazio = plano gratuito (3 consultas/min por IP). */
+  CNPJ_LOOKUP_TOKEN: z.string().optional(),
+  CNPJ_LOOKUP_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+  /** Cache em memória por CNPJ — protege a cota do plano gratuito. `0` desliga. */
+  CNPJ_LOOKUP_CACHE_TTL_MINUTES: z.coerce.number().int().nonnegative().default(60),
 });
 
 const refinedEnvSchema = envSchema.superRefine((data, ctx) => {

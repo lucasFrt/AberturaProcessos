@@ -7,6 +7,13 @@ export interface Company {
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
+  /**
+   * Só populado por `CompanyRepository.list()` (docs/05, "Empresas / CNPJs"):
+   * a tela de administração precisa exibir o nome da organização na tabela
+   * sem uma consulta extra por linha. `findById`/`create`/`update` não
+   * preenchem este campo — ele permanece `undefined`.
+   */
+  organization?: { id: string; name: string };
 }
 
 export interface CreateCompanyData {

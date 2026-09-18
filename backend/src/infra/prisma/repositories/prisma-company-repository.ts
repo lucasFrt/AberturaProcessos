@@ -40,9 +40,10 @@ export class PrismaCompanyRepository implements CompanyRepository {
         : {}),
     };
 
-    const [items, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       this.prisma.company.findMany({
         where,
+        include: { organization: { select: { id: true, name: true } } },
         orderBy: [{ legalName: 'asc' }],
         skip: (pagination.page - 1) * pagination.pageSize,
         take: pagination.pageSize,
@@ -50,7 +51,7 @@ export class PrismaCompanyRepository implements CompanyRepository {
       this.prisma.company.count({ where }),
     ]);
 
-    return { items, total };
+    return { items: rows, total };
   }
 
   async create(data: CreateCompanyData): Promise<Company> {

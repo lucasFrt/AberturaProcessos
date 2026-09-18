@@ -168,7 +168,28 @@ RATE_LIMIT_UPLOAD_MAX=30
 RATE_LIMIT_UPLOAD_WINDOW_MINUTES=10
 RATE_LIMIT_ANONYMOUS_MAX=60
 RATE_LIMIT_ANONYMOUS_WINDOW_MINUTES=1
+
+# ── Consulta de CNPJ na Receita (docs/05, "Empresas / CNPJs") ─
+# Autopreenchimento de razão social / nome fantasia no cadastro de empresa.
+CNPJ_LOOKUP_ENABLED=true
+CNPJ_LOOKUP_BASE_URL=https://receitaws.com.br/v1
+CNPJ_LOOKUP_TOKEN=
+CNPJ_LOOKUP_TIMEOUT_MS=10000
+CNPJ_LOOKUP_CACHE_TTL_MINUTES=60
 ```
+
+Sobre as variáveis `CNPJ_LOOKUP_*`:
+
+- **Prefixo genérico, não `RECEITAWS_*`**, porque o provedor é detalhe de infraestrutura atrás da
+  interface `CnpjLookupProvider` (`backend/src/domain/cnpj/cnpj-lookup-provider.ts`). Trocar para
+  BrasilAPI ou cnpj.ws deve exigir uma classe nova em `infra/cnpj/`, não renomear configuração.
+- **`CNPJ_LOOKUP_ENABLED=false`** faz `GET /companies/lookup/:cnpj` responder
+  `503 CNPJ_LOOKUP_DISABLED`; o cadastro manual de empresa continua funcionando normalmente. É
+  assim que a suíte de testes roda sem depender de API externa — ver `backend/.env.test`.
+- **`CNPJ_LOOKUP_TOKEN` vazio = plano gratuito da ReceitaWS**, que permite apenas **3 consultas por
+  minuto por IP** e responde `429` com corpo em `text/plain` ao estourar. Esse limite é o motivo de
+  existir `CNPJ_LOOKUP_CACHE_TTL_MINUTES` (cache em memória por CNPJ, `0` desliga) e de a API
+  validar os dígitos e procurar no banco local antes de chamar o provedor.
 
 ### Variáveis do frontend
 
@@ -373,6 +394,11 @@ STORAGE_ROOT=./storage/test-uploads
 SMTP_HOST=localhost
 SMTP_PORT=1025
 LOG_LEVEL=silent
+# Nenhum teste automatizado chama API externa (docs/09). Com a consulta
+# desligada, os testes de integração cobrem validação, escopo por papel e o
+# caminho "já cadastrado"; o caminho de sucesso é coberto por unit test com
+# fake de `CnpjLookupProvider`.
+CNPJ_LOOKUP_ENABLED=false
 ```
 
 A suíte de integração usa banco próprio e roda `prisma migrate deploy` no `beforeAll`. Redis e SMTP

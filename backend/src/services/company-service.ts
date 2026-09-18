@@ -1,3 +1,4 @@
+import type { CnpjLookupProvider } from '@/domain/cnpj/cnpj-lookup-provider';
 import type {
   Company,
   CompanyFilters,
@@ -13,6 +14,13 @@ import { isValidCnpj, normalizeCnpjDigits } from '@/shared/cnpj';
 export interface CompanyServiceDeps {
   companyRepository: CompanyRepository;
   organizationRepository: OrganizationRepository;
+  /**
+   * `null` quando `CNPJ_LOOKUP_ENABLED=false` (docs/10): a consulta responde
+   * 503 e o cadastro manual segue funcionando. Modelado como `null` explícito
+   * em vez de um provider no-op para que o service possa distinguir
+   * "desligado por configuração" de "provedor fora do ar".
+   */
+  cnpjLookupProvider: CnpjLookupProvider | null;
 }
 
 export interface CreateCompanyInput {
@@ -20,6 +28,23 @@ export interface CreateCompanyInput {
   legalName: string;
   tradeName?: string | null | undefined;
   organizationId: string;
+}
+
+/**
+ * Resultado da consulta de CNPJ apresentado ao operador. `alreadyRegistered`
+ * distingue os dados que vieram do nosso banco (empresa já cadastrada) dos que
+ * vieram da Receita, para a UI poder avisar em vez de deixar o admin descobrir
+ * no 409 do `POST /companies`.
+ */
+export interface CnpjLookupResult {
+  cnpj: string;
+  legalName: string;
+  tradeName: string | null;
+  registrationStatus: string | null;
+  alreadyRegistered: boolean;
+  /** Preenchido apenas quando `alreadyRegistered` é `true`. */
+  companyId: string | null;
+  organizationId: string | null;
 }
 
 /**
@@ -36,11 +61,72 @@ export class CompanyService {
     return this.deps.companyRepository.list(normalizedFilters, pagination);
   }
 
-  async create(input: CreateCompanyInput): Promise<Company> {
-    const cnpj = normalizeCnpjDigits(input.cnpj);
-    if (!isValidCnpj(cnpj)) {
-      throw new AppError('INVALID_CNPJ', 'CNPJ com dígitos verificadores inválidos.', 400);
+  /**
+   * Consulta os dados cadastrais de um CNPJ para autopreencher o formulário de
+   * cadastro de empresa (docs/05, "Empresas / CNPJs").
+   *
+   * A ordem dos passos é intencional: validar os dígitos e checar o próprio
+   * banco **antes** de chamar a Receita. O plano gratuito do provedor permite
+   * apenas 3 consultas por minuto por IP, então gastar uma requisição com um
+   * CNPJ malformado ou com uma empresa que já está cadastrada aqui
+   * desperdiçaria cota que o próximo operador precisa.
+   */
+  async lookupCnpj(rawCnpj: string): Promise<CnpjLookupResult> {
+    const cnpj = this.normalizeAndValidateCnpj(rawCnpj);
+
+    const existing = await this.deps.companyRepository.findByCnpj(cnpj);
+    if (existing) {
+      return {
+        cnpj: existing.cnpj,
+        legalName: existing.legalName,
+        tradeName: existing.tradeName,
+        registrationStatus: null,
+        alreadyRegistered: true,
+        companyId: existing.id,
+        organizationId: existing.organizationId,
+      };
     }
+
+    const provider = this.deps.cnpjLookupProvider;
+    if (!provider) {
+      throw new AppError(
+        'CNPJ_LOOKUP_DISABLED',
+        'A consulta automática de CNPJ está desabilitada. Preencha os dados manualmente.',
+        503,
+      );
+    }
+
+    const outcome = await provider.lookup(cnpj);
+
+    switch (outcome.kind) {
+      case 'FOUND':
+        return {
+          cnpj: outcome.data.cnpj,
+          legalName: outcome.data.legalName,
+          tradeName: outcome.data.tradeName,
+          registrationStatus: outcome.data.registrationStatus,
+          alreadyRegistered: false,
+          companyId: null,
+          organizationId: null,
+        };
+      case 'NOT_FOUND':
+        throw new NotFoundError(
+          'CNPJ_NOT_FOUND',
+          'CNPJ não encontrado na base da Receita Federal.',
+        );
+      case 'RATE_LIMITED':
+        throw new AppError(
+          'CNPJ_LOOKUP_RATE_LIMITED',
+          'Limite de consultas à Receita Federal atingido. Aguarde um minuto e tente novamente.',
+          429,
+        );
+      case 'UNAVAILABLE':
+        throw new AppError('CNPJ_LOOKUP_UNAVAILABLE', outcome.reason, 503);
+    }
+  }
+
+  async create(input: CreateCompanyInput): Promise<Company> {
+    const cnpj = this.normalizeAndValidateCnpj(input.cnpj);
 
     const organization = await this.deps.organizationRepository.findById(input.organizationId);
     if (!organization) {
@@ -80,6 +166,15 @@ export class CompanyService {
     }
 
     return this.deps.companyRepository.update(id, data);
+  }
+
+  /** Aceita com ou sem máscara e devolve somente dígitos (RF-12). */
+  private normalizeAndValidateCnpj(rawCnpj: string): string {
+    const cnpj = normalizeCnpjDigits(rawCnpj);
+    if (!isValidCnpj(cnpj)) {
+      throw new AppError('INVALID_CNPJ', 'CNPJ com dígitos verificadores inválidos.', 400);
+    }
+    return cnpj;
   }
 
   async delete(id: string): Promise<void> {

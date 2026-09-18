@@ -379,11 +379,17 @@ npm run preview
 server: {
   port: 5173,
   proxy: {
-    '/api': { target: 'http://localhost:3000', changeOrigin: true },
-    '/socket.io': { target: 'http://localhost:3000', ws: true },
+    '/api': { target: 'http://127.0.0.1:3000', changeOrigin: true },
+    '/socket.io': { target: 'http://127.0.0.1:3000', ws: true },
   },
 }
 ```
+
+O target é `127.0.0.1`, nunca `localhost`. A API faz bind explícito em `127.0.0.1`
+(`server.listen(env.PORT, '127.0.0.1')`, exigido por `docs/11`, seção "Superfície de rede"), e no
+Windows o resolvedor de nome do Node devolve `::1` antes de `127.0.0.1` para `localhost` — com
+`localhost` no target, todas as chamadas do proxy falham com
+`http proxy error: ECONNREFUSED ::1:3000` e o front mostra "Ocorreu um erro inesperado" no login.
 
 Usar proxy em dev (em vez de apontar `VITE_API_URL` para outra origem) faz o ambiente local se
 comportar como produção: mesma origem, cookie de refresh funcionando, sem CORS. `dist/` é publicado

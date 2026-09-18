@@ -26,11 +26,13 @@ const FORBIDDEN_INFRA_PATTERNS = [
   /from ['"]@\/infra\/mail/,
   /from ['"]@\/infra\/storage/,
   /from ['"]@\/infra\/realtime/,
+  /from ['"]@\/infra\/cnpj/,
   /require\(['"]@\/infra\/prisma/,
   /require\(['"]@\/infra\/queue/,
   /require\(['"]@\/infra\/mail/,
   /require\(['"]@\/infra\/storage/,
   /require\(['"]@\/infra\/realtime/,
+  /require\(['"]@\/infra\/cnpj/,
 ];
 
 const FORBIDDEN_PACKAGE_PATTERNS = [

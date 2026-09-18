@@ -7,6 +7,7 @@ import { authorize } from '@/http/middlewares/authorize';
 import type { RateLimiters } from '@/http/middlewares/rate-limit';
 import { validate } from '@/http/middlewares/validate';
 import {
+  cnpjLookupParamsSchema,
   companyIdParamsSchema,
   createCompanySchema,
   listCompaniesQuerySchema,
@@ -31,6 +32,9 @@ export function buildCompanyRouter(
 
   router.get('/', validate({ query: listCompaniesQuerySchema }), controller.list);
   router.post('/', validate({ body: createCompanySchema }), controller.create);
+  // Declarada antes de `/:id` por clareza. Não há ambiguidade real: `/:id`
+  // casa um único segmento, e esta rota tem dois (`/lookup/<cnpj>`).
+  router.get('/lookup/:cnpj', validate({ params: cnpjLookupParamsSchema }), controller.lookupCnpj);
   router.get('/:id', validate({ params: companyIdParamsSchema }), controller.getById);
   router.patch(
     '/:id',

@@ -1,8 +1,9 @@
 import type { NextFunction, Request, Response } from 'express';
 
-import { presentCompany } from '@/http/presenters/company-presenter';
+import { presentCnpjLookup, presentCompany } from '@/http/presenters/company-presenter';
 import { presentCollection } from '@/http/presenters/pagination-presenter';
 import type {
+  CnpjLookupParams,
   CreateCompanyBody,
   ListCompaniesQuery,
   UpdateCompanyBody,
@@ -47,6 +48,20 @@ export class CompanyController {
         organizationId: body.organizationId,
       });
       res.status(201).json(presentCompany(company));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  lookupCnpj = (req: Request, res: Response, next: NextFunction): void => {
+    void this.handleLookupCnpj(req, res, next);
+  };
+
+  private async handleLookupCnpj(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { cnpj } = req.params as unknown as CnpjLookupParams;
+      const result = await this.service.lookupCnpj(cnpj);
+      res.status(200).json(presentCnpjLookup(result));
     } catch (error) {
       next(error);
     }

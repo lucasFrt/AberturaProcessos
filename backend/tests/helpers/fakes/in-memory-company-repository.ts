@@ -13,6 +13,13 @@ export class InMemoryCompanyRepository implements CompanyRepository {
   readonly items: Company[] = [];
   /** companyId -> contagem simulada de processos vinculados. */
   readonly linkedProcessCounts = new Map<string, number>();
+  /**
+   * organizationId -> nome, para simular o join que `list()` faz no Prisma
+   * (`prisma-company-repository.ts`). Sem isso, um teste que só usa este fake
+   * não pega uma regressão como a que motivou este campo: `organization`
+   * ficando de fora do DTO da listagem.
+   */
+  readonly organizationNames = new Map<string, string>();
 
   async findManyByIds(ids: string[]): Promise<Company[]> {
     return this.items.filter((item) => ids.includes(item.id));
@@ -42,7 +49,11 @@ export class InMemoryCompanyRepository implements CompanyRepository {
     });
 
     const start = (pagination.page - 1) * pagination.pageSize;
-    return { items: filtered.slice(start, start + pagination.pageSize), total: filtered.length };
+    const page = filtered.slice(start, start + pagination.pageSize).map((item) => {
+      const name = this.organizationNames.get(item.organizationId);
+      return name ? { ...item, organization: { id: item.organizationId, name } } : item;
+    });
+    return { items: page, total: filtered.length };
   }
 
   async create(data: CreateCompanyData): Promise<Company> {

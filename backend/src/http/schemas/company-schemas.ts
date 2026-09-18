@@ -35,3 +35,13 @@ export const listCompaniesQuerySchema = paginationQuerySchema.extend({
 export type ListCompaniesQuery = z.infer<typeof listCompaniesQuerySchema>;
 
 export const companyIdParamsSchema = z.object({ id: z.string().min(1) });
+
+/**
+ * Consulta de CNPJ na Receita. Só checa o formato bruto (com ou sem máscara);
+ * os dígitos verificadores são validados no service, que é quem devolve
+ * `400 INVALID_CNPJ` — mesma divisão de `createCompanySchema`.
+ */
+export const cnpjLookupParamsSchema = z.object({
+  cnpj: z.string().trim().min(11, 'CNPJ inválido.').max(20),
+});
+export type CnpjLookupParams = z.infer<typeof cnpjLookupParamsSchema>;

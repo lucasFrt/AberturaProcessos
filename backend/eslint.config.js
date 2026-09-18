@@ -67,6 +67,7 @@ module.exports = tseslint.config(
             '@/infra/mail/*',
             '@/infra/storage/*',
             '@/infra/realtime/*',
+            '@/infra/cnpj/*',
           ],
         },
       ],

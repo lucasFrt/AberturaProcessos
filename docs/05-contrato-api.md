@@ -45,11 +45,15 @@ Base: `/api/v1`. Todo corpo de requisição e resposta é `application/json`, ex
 | 403 | `ACCOUNT_PENDING` | Conta aguardando aprovação de ADMIN. |
 | 403 | `ACCOUNT_DISABLED` | Conta desativada ou rejeitada. |
 | 404 | `NOT_FOUND` | Recurso inexistente **ou** fora do escopo de acesso (ver RNF-01). |
+| 404 | `CNPJ_NOT_FOUND` | CNPJ válido, mas inexistente na base da Receita (`GET /companies/lookup/:cnpj`). |
 | 409 | `CONFLICT` | Violação de unicidade ou de regra de estado. |
 | 409 | `STAGE_NOT_EMPTY` | Exclusão de etapa que ainda contém processos ativos. |
 | 413 | `PAYLOAD_TOO_LARGE` | Upload acima de `MAX_UPLOAD_SIZE_MB`. |
 | 429 | `RATE_LIMIT_EXCEEDED` | Limite atingido. Header `Retry-After` presente. |
+| 429 | `CNPJ_LOOKUP_RATE_LIMITED` | Cota do provedor externo de consulta de CNPJ estourada. |
 | 500 | `INTERNAL_ERROR` | Falha não prevista. Nunca expõe stack trace. |
+| 503 | `CNPJ_LOOKUP_UNAVAILABLE` | Provedor de consulta de CNPJ fora do ar, em timeout ou fora do contrato. |
+| 503 | `CNPJ_LOOKUP_DISABLED` | Consulta de CNPJ desligada por configuração (`CNPJ_LOOKUP_ENABLED=false`). |
 
 > **Por que 404 e não 403 fora do escopo:** responder 403 confirmaria a existência de um processo de
 > outro cliente. Para recursos de outra Organization a API responde 404.
@@ -182,11 +186,51 @@ Autenticado. Retorna tudo que a UI precisa para montar navegação e permissões
 | --- | --- | --- |
 | `GET` | `/companies` | Filtros: `q` (razão social, nome fantasia ou CNPJ), `organizationId`, `isActive`. CLIENT recebe apenas os CNPJs do seu escopo. |
 | `POST` | `/companies` | `{ cnpj, legalName, tradeName?, organizationId }` |
+| `GET` | `/companies/lookup/:cnpj` | Consulta os dados cadastrais na Receita para autopreencher o formulário. Ver abaixo. |
 | `GET` | `/companies/:id` | Detalhe. |
 | `PATCH` | `/companies/:id` | `{ legalName?, tradeName?, isActive?, organizationId? }` |
 | `DELETE` | `/companies/:id` | `409 CONFLICT` se houver processos. |
 
 O CNPJ é aceito com ou sem máscara e persistido apenas com dígitos.
+
+### `GET /companies/lookup/:cnpj`
+
+ADMIN. Evita digitação manual de razão social e nome fantasia no cadastro de empresa. O `:cnpj`
+pode vir com ou sem máscara.
+
+```json
+{
+  "cnpj": "05557450000608",
+  "legalName": "SAINT PAUL'S IMPORTACAO E EXPORTACAO LTDA",
+  "tradeName": null,
+  "registrationStatus": "ATIVA",
+  "alreadyRegistered": false,
+  "companyId": null,
+  "organizationId": null
+}
+```
+
+`alreadyRegistered: true` significa que o CNPJ **já existe neste sistema**: nesse caso os dados
+vêm do nosso banco (não da Receita), `registrationStatus` é `null` e `companyId`/`organizationId`
+apontam para o registro existente. Serve para o front avisar antes de o `POST /companies` falhar
+com `409 CONFLICT`.
+
+A ordem de execução é validar os dígitos → procurar no banco local → só então consultar o
+provedor externo. O motivo é cota: o plano gratuito do provedor permite 3 consultas por minuto por
+IP, então nem CNPJ malformado nem empresa já cadastrada devem gastar uma requisição. O provedor
+concreto é detalhe de infraestrutura atrás de `CnpjLookupProvider`
+(`backend/src/domain/cnpj/cnpj-lookup-provider.ts`); a implementação padrão usa a ReceitaWS e é
+configurada pelas variáveis `CNPJ_LOOKUP_*` (docs/10).
+
+Erros específicos desta rota:
+
+| Código | Status | Quando |
+| --- | --- | --- |
+| `INVALID_CNPJ` | 400 | Dígitos verificadores inválidos (não consulta o provedor). |
+| `CNPJ_NOT_FOUND` | 404 | CNPJ válido, mas inexistente na base da Receita. |
+| `CNPJ_LOOKUP_RATE_LIMITED` | 429 | Cota do provedor externo estourada. |
+| `CNPJ_LOOKUP_UNAVAILABLE` | 503 | Timeout, falha de rede, 5xx ou resposta fora do contrato. |
+| `CNPJ_LOOKUP_DISABLED` | 503 | `CNPJ_LOOKUP_ENABLED=false`. O cadastro manual continua funcionando. |
 
 ## Usuários (ADMIN)
 

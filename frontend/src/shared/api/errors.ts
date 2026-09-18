@@ -10,6 +10,13 @@ import type { ApiErrorBody } from '@/shared/types';
 const MESSAGES_BY_CODE: Record<string, string> = {
   VALIDATION_ERROR: 'Dados inválidos. Verifique os campos e tente novamente.',
   INVALID_CNPJ: 'CNPJ inválido.',
+  CNPJ_NOT_FOUND: 'CNPJ não encontrado na base da Receita Federal.',
+  CNPJ_LOOKUP_RATE_LIMITED:
+    'Limite de consultas à Receita Federal atingido. Aguarde um minuto e tente novamente.',
+  CNPJ_LOOKUP_UNAVAILABLE:
+    'Não foi possível consultar a Receita Federal agora. Preencha os dados manualmente.',
+  CNPJ_LOOKUP_DISABLED:
+    'A consulta automática de CNPJ está desabilitada. Preencha os dados manualmente.',
   UNAUTHENTICATED: 'Sua sessão expirou. Faça login novamente.',
   INVALID_CREDENTIALS: 'E-mail ou senha incorretos.',
   FORBIDDEN: 'Você não tem permissão para realizar esta ação.',

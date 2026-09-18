@@ -12,6 +12,7 @@ import { SocialAuthController } from '@/http/controllers/social-auth-controller'
 import { UserManagementController } from '@/http/controllers/user-management-controller';
 import type { AuthenticateDeps } from '@/http/middlewares/authenticate';
 import type { UploadMiddlewareConfig } from '@/http/middlewares/upload';
+import { ReceitaWsCnpjLookupProvider } from '@/infra/cnpj/receitaws-cnpj-lookup-provider';
 import { logger } from '@/infra/logger';
 import { PrismaCompanyRepository } from '@/infra/prisma/repositories/prisma-company-repository';
 import { PrismaDashboardRepository } from '@/infra/prisma/repositories/prisma-dashboard-repository';
@@ -149,7 +150,27 @@ export function buildContainer(prisma: PrismaClient): Container {
     companyRepository,
   });
 
-  const companyService = new CompanyService({ companyRepository, organizationRepository });
+  // Consulta de CNPJ na Receita (docs/05, "Empresas / CNPJs"). `null` quando
+  // desabilitada por configuração: `CompanyService` responde 503
+  // CNPJ_LOOKUP_DISABLED e o cadastro manual segue funcionando — é assim que
+  // os testes de integração rodam sem depender de API externa (docs/09).
+  const cnpjLookupProvider = env.CNPJ_LOOKUP_ENABLED
+    ? new ReceitaWsCnpjLookupProvider(
+        {
+          baseUrl: env.CNPJ_LOOKUP_BASE_URL,
+          timeoutMs: env.CNPJ_LOOKUP_TIMEOUT_MS,
+          cacheTtlMs: env.CNPJ_LOOKUP_CACHE_TTL_MINUTES * 60_000,
+          token: env.CNPJ_LOOKUP_TOKEN,
+        },
+        logger,
+      )
+    : null;
+
+  const companyService = new CompanyService({
+    companyRepository,
+    organizationRepository,
+    cnpjLookupProvider,
+  });
 
   const userManagementService = new UserManagementService({
     userRepository,
