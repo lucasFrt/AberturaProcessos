@@ -30,7 +30,8 @@ AberturaProcessos/
 | [11-deploy-windows-server.md](./11-deploy-windows-server.md) | Windows Server 2022 + IIS + NSSM + SQL Server |
 | [12-plano-de-tarefas.md](./12-plano-de-tarefas.md) | Tarefas incrementais (22 do núcleo + Fase 7 de alimentação por IA), cada uma com critério de aceite |
 | [13-integracao-ia-email.md](./13-integracao-ia-email.md) | Alimentação por IA: chaves de API, intake idempotente por e-mail, anexos via Microsoft Graph, MCP server |
-| [prompts/](./prompts/) | Prompts prontos: delegação de tarefas a uma IA e o **prompt operacional do agente de e-mail** (`agente-email-haiku.md`) |
+| [14-viabilidade-rotina-nuvem.md](./14-viabilidade-rotina-nuvem.md) | Estudo de viabilidade (18/09/2026): agente como rotina agendada na nuvem da Anthropic com Claude Max — condições, riscos, custo, próximos passos |
+| [prompts/](./prompts/) | Prompts prontos: delegação de tarefas a uma IA e os prompts do agente de e-mail — `rotina-intake-claude-max.md` (rotina na nuvem, curl) e `agente-email-haiku.md` (Claude Code local com MCP) |
 
 Ver também [`CLAUDE.md`](../CLAUDE.md) na raiz do repositório: contexto operacional para agentes de
 IA (regras de arquitetura, convenções, decisões técnicas já tomadas, estado atual do projeto).

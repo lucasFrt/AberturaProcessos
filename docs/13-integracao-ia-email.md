@@ -114,8 +114,8 @@ A gaveta do processo mostra "Aberto por e-mail — João <joao@clientex.com.br>,
 ### 8. Um MCP server próprio, fino, sobre a API
 
 Para que o Haiku não precise montar `curl` com multipart, o repositório traz `mcp-server/`: um
-servidor MCP (stdio) com quatro ferramentas — `lookup_process`, `create_process_from_email`,
-`attach_to_process`, `get_intake_event` — que só traduzem chamada de ferramenta em requisição HTTP
+servidor MCP (stdio) com cinco ferramentas — `get_intake_event`, `lookup_process`,
+`create_process_from_email`, `attach_to_process`, `get_process` — que só traduzem chamada de ferramenta em requisição HTTP
 com a chave de API. Zero regra de negócio ali. Se o orquestrador não suportar MCP local, a API
 continua utilizável diretamente (docs/05).
 
@@ -134,7 +134,7 @@ sequenceDiagram
     loop cada e-mail
         A->>M: get_intake_event(externalId)
         M->>API: GET /intake/events?externalId=...
-        API-->>A: 404 (não processado) / 200 (já processado → pula)
+        API-->>A: 200 { data: [] } (não processado) / 200 com evento COMPLETED (já processado → pula)
         A->>A: classificar: NOVO PROCESSO ou COMPLEMENTO (ref citada)
         alt novo processo
             A->>M: create_process_from_email({source, requester, company, reference, ...})
@@ -170,18 +170,50 @@ Detalhe completo em `docs/05-contrato-api.md`, seção "Intake (alimentação po
 Variáveis novas (docs/10): `GRAPH_INTAKE_ENABLED`, `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`,
 `GRAPH_CLIENT_SECRET`, `GRAPH_MAILBOX`, `GRAPH_TIMEOUT_MS`.
 
-No Azure (Entra ID): registro de aplicação com permissão **de aplicação** `Mail.Read` (consentimento
-de administrador) e, obrigatoriamente, uma `ApplicationAccessPolicy` do Exchange Online restringindo
-a aplicação à caixa de entrada da trading — sem isso, `Mail.Read` de aplicação lê **todas** as caixas
-do tenant:
+### Acesso do backend à caixa (Microsoft Graph, credenciais de aplicação)
+
+Sem restrição, `Mail.Read` de aplicação lê **todas** as caixas do tenant. A restrição a uma caixa é
+obrigatória e o mecanismo recomendado pela Microsoft é **RBAC for Applications** do Exchange Online —
+`ApplicationAccessPolicy` está marcada como legado ("Don't create new App Access Policies"), não aceita
+caixa compartilhada diretamente e terá depreciação anunciada
+([learn.microsoft.com/exchange/permissions-exo/application-rbac](https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac)).
+
+1. No Entra ID: registro de aplicação (client id + client secret = `GRAPH_CLIENT_ID`/`GRAPH_CLIENT_SECRET`).
+   **Não** conceda `Mail.Read` de aplicação no Entra quando usar RBAC: a concessão no Entra é sem
+   escopo e anularia a restrição (FAQ da Microsoft). O papel vem do Exchange, no passo 3.
+2. No Exchange Online (PowerShell, papel Exchange Administrator / Organization Management):
 
 ```powershell
-New-ApplicationAccessPolicy -AppId <GRAPH_CLIENT_ID> -PolicyScopeGroupId <caixa ou grupo> `
-  -AccessRight RestrictAccess -Description "Intake de processos"
+Connect-ExchangeOnline
+# ObjectId = "Object ID" do app em Enterprise Applications (não o do App Registration)
+New-ServicePrincipal -AppId <GRAPH_CLIENT_ID> -ObjectId <ObjectId-do-Enterprise-App> -DisplayName "Intake de processos"
+New-ManagementScope -Name "IntakeProcessos" -RecipientRestrictionFilter "PrimarySmtpAddress -eq 'processos@opusce.com.br'"
+New-ManagementRoleAssignment -App <ObjectId-do-Enterprise-App> -Role "Application Mail.Read" -CustomResourceScope "IntakeProcessos"
+# Valida na hora (ignora o cache de 30 min a 2 h da propagação real):
+Test-ServicePrincipalAuthorization -Identity <ObjectId-do-Enterprise-App> -Resource processos@opusce.com.br
 ```
 
-O agente em si é configurado pelo prompt em `docs/prompts/agente-email-haiku.md` e pelo MCP em
-`mcp-server/README.md`.
+3. `GRAPH_MAILBOX` **tem de ser a mesma caixa que o agente lê pelo conector**: o id de mensagem do
+   Graph é específico da caixa, e o backend busca `/users/{GRAPH_MAILBOX}/messages/{id}`. Se o agente
+   lê uma caixa compartilhada via `mailboxOwnerEmail`, é ela que vai em `GRAPH_MAILBOX`; se lê a caixa
+   pessoal de quem autorizou o conector, é essa. Ids também mudam quando a mensagem é movida de
+   pasta — por isso o agente deve processar na hora e o backend baixa os anexos antes de qualquer
+   escrita. (Evolução prevista: aceitar `internetMessageId` como chave secundária, estável entre
+   pastas e caixas; o conector já o devolve.)
+
+### O agente
+
+Há dois prompts, um por forma de execução:
+
+- `docs/prompts/rotina-intake-claude-max.md` — **rotina agendada na nuvem da Anthropic** (Claude
+  Code routines, plano Max). Não usa o `mcp-server/` (a nuvem só enxerga conectores claude.ai por
+  HTTPS): chama a API pública por `curl`, com a chave guardada como *API credential* do ambiente e
+  injetada pelo proxy da Anthropic. É o caminho da fase de validação.
+- `docs/prompts/agente-email-haiku.md` — execução com Claude Code local/headless usando as ferramentas
+  do `mcp-server/` (`mcp-server/README.md`).
+
+O estudo de viabilidade que fundamenta essa divisão (restrições da plataforma, Graph, custo) está em
+`docs/14-viabilidade-rotina-nuvem.md`.
 
 ## O que fica fora deste escopo
 
