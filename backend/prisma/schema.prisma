@@ -100,6 +100,8 @@ model User {
   historyEntries       ProcessHistory[] @relation("HistoryActor")
   uploadedDocuments    Document[]       @relation("DocumentUploadedBy")
   deletedDocuments     Document[]       @relation("DocumentDeletedBy")
+  apiKeys              ApiKey[]         @relation("ApiKeyUser")
+  createdApiKeys       ApiKey[]         @relation("ApiKeyCreatedBy")
 
   @@index([organizationId])
   @@index([status])
@@ -123,6 +125,28 @@ model UserIdentity {
   @@unique([provider, providerUserId])
   @@index([userId])
   @@map("user_identities")
+}
+
+/// Chave de API de conta de serviço (docs/13, decisão 2). Vinculada a um
+/// usuário interno: o agente age *como* esse usuário (autoria no histórico).
+model ApiKey {
+  id          String    @id @default(cuid()) @db.NVarChar(30)
+  name        String    @db.NVarChar(100)
+  /// SHA-256 da chave; o valor puro é exibido uma única vez e nunca gravado
+  keyHash     String    @unique @db.NVarChar(64)
+  /// Primeiros caracteres da chave, só para o ADMIN reconhecê-la na lista
+  keyPrefix   String    @db.NVarChar(16)
+  userId      String    @db.NVarChar(30)
+  createdById String    @db.NVarChar(30)
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  user      User @relation("ApiKeyUser", fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdBy User @relation("ApiKeyCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([userId])
+  @@map("api_keys")
 }
 
 /// Acesso explícito a um CNPJ. Só relevante quando accessScope = COMPANIES.

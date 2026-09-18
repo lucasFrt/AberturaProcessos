@@ -92,6 +92,7 @@ npm install
 copy .env.example .env
 copy .env.test.example .env.test
 npx prisma migrate deploy
+npm run prisma:deploy:test   # banco de teste (necessário para `npm test`)
 npm run seed
 ```
 

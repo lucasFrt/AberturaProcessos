@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 
 import { env } from '@/config/env';
+import { ApiKeyController } from '@/http/controllers/api-key-controller';
 import { AuthController } from '@/http/controllers/auth-controller';
 import { CompanyController } from '@/http/controllers/company-controller';
 import { DashboardController } from '@/http/controllers/dashboard-controller';
@@ -14,6 +15,7 @@ import type { AuthenticateDeps } from '@/http/middlewares/authenticate';
 import type { UploadMiddlewareConfig } from '@/http/middlewares/upload';
 import { ReceitaWsCnpjLookupProvider } from '@/infra/cnpj/receitaws-cnpj-lookup-provider';
 import { logger } from '@/infra/logger';
+import { PrismaApiKeyRepository } from '@/infra/prisma/repositories/prisma-api-key-repository';
 import { PrismaCompanyRepository } from '@/infra/prisma/repositories/prisma-company-repository';
 import { PrismaDashboardRepository } from '@/infra/prisma/repositories/prisma-dashboard-repository';
 import { PrismaDocumentRepository } from '@/infra/prisma/repositories/prisma-document-repository';
@@ -33,6 +35,7 @@ import { LocalDiskStorage } from '@/infra/storage/local-disk-storage';
 import { configurePassport, passport } from '@/passport';
 import type { ConfiguredProviders } from '@/passport';
 import { AccessScopeResolver } from '@/services/access-scope-resolver';
+import { ApiKeyService } from '@/services/api-key-service';
 import { AuthService } from '@/services/auth-service';
 import { CompanyService } from '@/services/company-service';
 import { DashboardService } from '@/services/dashboard-service';
@@ -66,6 +69,7 @@ export interface Container {
   realtimeProvider: DeferredRealtimeProvider;
   authController: AuthController;
   authenticateDeps: AuthenticateDeps;
+  apiKeyController: ApiKeyController;
   socialAuthController: SocialAuthController;
   configuredProviders: ConfiguredProviders;
   organizationController: OrganizationController;
@@ -89,6 +93,7 @@ export function buildContainer(prisma: PrismaClient): Container {
   const processRepository = new PrismaProcessRepository(prisma);
   const documentRepository = new PrismaDocumentRepository(prisma);
   const dashboardRepository = new PrismaDashboardRepository(prisma);
+  const apiKeyRepository = new PrismaApiKeyRepository(prisma);
 
   const passwordHasher = new BcryptPasswordHasher();
   const tokenService = new JwtTokenService();
@@ -142,7 +147,16 @@ export function buildContainer(prisma: PrismaClient): Container {
   // (docs/06, critério de aceite da Tarefa 5) — nunca impede a subida da API.
   const configuredProviders = configurePassport(socialAuthService);
 
-  const authenticateDeps: AuthenticateDeps = { tokenService, userRepository, accessScopeResolver };
+  // `apiKeyRepository` entra aqui porque `authenticate` aceita `X-Api-Key`
+  // além do JWT (docs/13, decisão 2).
+  const authenticateDeps: AuthenticateDeps = {
+    tokenService,
+    userRepository,
+    accessScopeResolver,
+    apiKeyRepository,
+  };
+
+  const apiKeyService = new ApiKeyService({ apiKeyRepository, userRepository });
 
   const organizationService = new OrganizationService({
     organizationRepository,
@@ -211,6 +225,7 @@ export function buildContainer(prisma: PrismaClient): Container {
     realtimeProvider,
     authController: new AuthController(authService, organizationRepository),
     authenticateDeps,
+    apiKeyController: new ApiKeyController(apiKeyService),
     socialAuthController: new SocialAuthController(passport, configuredProviders),
     configuredProviders,
     organizationController: new OrganizationController(organizationService),

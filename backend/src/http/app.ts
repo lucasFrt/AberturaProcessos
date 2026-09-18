@@ -10,6 +10,7 @@ import { errorHandler, notFoundHandler } from '@/http/middlewares/error-handler'
 import type { RateLimiters } from '@/http/middlewares/rate-limit';
 import { defaultRateLimiters } from '@/http/middlewares/rate-limit';
 import { requestContext } from '@/http/middlewares/request-context';
+import { buildApiKeyRouter } from '@/http/routes/api-key-routes';
 import { buildAuthRouter } from '@/http/routes/auth-routes';
 import { buildCompanyRouter } from '@/http/routes/company-routes';
 import { buildDashboardRouter } from '@/http/routes/dashboard-routes';
@@ -71,6 +72,10 @@ export function createApp(
       container.socialAuthController,
       container.configuredProviders,
     ),
+  );
+  apiRouter.use(
+    '/api-keys',
+    buildApiKeyRouter(container.apiKeyController, container.authenticateDeps, rateLimiters),
   );
   apiRouter.use(
     '/organizations',

@@ -27,7 +27,8 @@ AberturaProcessos/
 | [09-padroes-de-codigo-e-testes.md](./09-padroes-de-codigo-e-testes.md) | SOLID aplicado, convenções, estratégia de testes |
 | [10-ambiente-e-configuracao.md](./10-ambiente-e-configuracao.md) | Variáveis de ambiente, docker-compose, setup local |
 | [11-deploy-windows-server.md](./11-deploy-windows-server.md) | Windows Server 2022 + IIS + NSSM + SQL Server |
-| [12-plano-de-tarefas.md](./12-plano-de-tarefas.md) | 22 tarefas incrementais, cada uma com critério de aceite |
+| [12-plano-de-tarefas.md](./12-plano-de-tarefas.md) | Tarefas incrementais (22 do núcleo + Fase 7 de alimentação por IA), cada uma com critério de aceite |
+| [13-integracao-ia-email.md](./13-integracao-ia-email.md) | Alimentação por IA: chaves de API, intake idempotente por e-mail, anexos via Microsoft Graph, MCP server |
 | [prompts/](./prompts/) | Prompts prontos para delegar cada tarefa a uma IA, com contexto e referências já resolvidas |
 
 Ver também [`CLAUDE.md`](../CLAUDE.md) na raiz do repositório: contexto operacional para agentes de

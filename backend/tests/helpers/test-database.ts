@@ -12,6 +12,7 @@ export async function truncateAll(prisma: PrismaClient): Promise<void> {
     'process_sequences',
     'kanban_stages',
     'refresh_tokens',
+    'api_keys',
     'user_identities',
     'user_companies',
     'users',

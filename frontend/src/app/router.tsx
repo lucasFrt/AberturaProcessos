@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
+import { ApiKeysPage } from '@/features/admin/pages/ApiKeysPage';
 import { CompaniesPage } from '@/features/admin/pages/CompaniesPage';
 import { OrganizationsPage } from '@/features/admin/pages/OrganizationsPage';
 import { StagesPage } from '@/features/admin/pages/StagesPage';
@@ -43,6 +44,7 @@ export function AppRouter(): ReactElement {
             <Route path="/admin/companies" element={<CompaniesPage />} />
             <Route path="/admin/users" element={<UsersPage />} />
             <Route path="/admin/stages" element={<StagesPage />} />
+            <Route path="/admin/api-keys" element={<ApiKeysPage />} />
           </Route>
         </Route>
       </Route>

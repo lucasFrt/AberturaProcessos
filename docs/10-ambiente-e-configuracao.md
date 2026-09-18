@@ -401,6 +401,13 @@ LOG_LEVEL=silent
 CNPJ_LOOKUP_ENABLED=false
 ```
 
-A suíte de integração usa banco próprio e roda `prisma migrate deploy` no `beforeAll`. Redis e SMTP
-são fakes injetados no container de teste, então não é preciso Redis rodando para testar. O diretório
-de upload de teste é limpo no `afterAll`.
+A suíte de integração usa banco próprio (`abertura_processos_test`), que **precisa estar migrado
+antes de rodar os testes** — a suíte não aplica migrations sozinha. Depois de cada migration nova:
+
+```powershell
+# de dentro de backend/ (PowerShell)
+$env:DATABASE_URL = (Get-Content .env.test | Select-String '^DATABASE_URL=').ToString().Split('=',2)[1].Trim('"')
+npx prisma migrate deploy
+```
+
+ou simplesmente `npm run prisma:deploy:test`. O diretório de upload de teste é limpo no `afterAll`.

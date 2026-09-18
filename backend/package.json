@@ -17,6 +17,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
+    "prisma:deploy:test": "dotenv -e .env.test -- prisma migrate deploy",
     "prisma:studio": "prisma studio"
   },
   "prisma": {
@@ -63,6 +64,7 @@
     "@types/passport-google-oauth20": "2.0.17",
     "@types/passport-microsoft": "2.1.1",
     "@types/supertest": "^7.2.1",
+    "dotenv-cli": "^11.0.0",
     "eslint": "^9.39.5",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-import": "^2.32.0",

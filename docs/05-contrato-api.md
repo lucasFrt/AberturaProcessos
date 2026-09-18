@@ -60,6 +60,17 @@ Base: `/api/v1`. Todo corpo de requisição e resposta é `application/json`, ex
 
 ## Autenticação
 
+Toda rota autenticada aceita **uma** de duas credenciais (docs/06 e docs/13, decisão 2):
+
+| Header | Quem usa | Resolve para |
+| --- | --- | --- |
+| `Authorization: Bearer <access token>` | Pessoas (front) | O usuário do JWT. |
+| `X-Api-Key: <chave>` | Integrações (agente de e-mail, MCP) | O usuário interno vinculado à chave (`POST /api-keys`). |
+
+Depois de resolvida a credencial, nada muda: status, papel, escopo e rate limit são os do usuário.
+Chave revogada ou inexistente → `401 UNAUTHENTICATED`; usuário vinculado desativado →
+`403 ACCOUNT_DISABLED`. Quando os dois headers vêm juntos, `X-Api-Key` prevalece.
+
 ### `POST /auth/register`
 
 Público. Cria conta local. Rate limit de auth.
@@ -164,6 +175,35 @@ Autenticado. Retorna tudo que a UI precisa para montar navegação e permissões
   ]
 }
 ```
+
+## Chaves de API (ADMIN)
+
+Contas de serviço para integrações (docs/13, decisão 2). A chave age como o usuário interno
+vinculado — o histórico dos processos mostra esse usuário como autor.
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/api-keys` | `{ data: [...] }` com todas as chaves (ativas e revogadas), mais recentes primeiro. |
+| `POST` | `/api-keys` | `{ name, userId }`. `userId` precisa ser OPERATIONAL/ADMIN e `ACTIVE`, senão `400 VALIDATION_ERROR`. |
+| `DELETE` | `/api-keys/:id` | Revoga. `204`. Idempotente. |
+
+Resposta do `POST` (`201`) — o campo `key` **só existe aqui**; só o hash SHA-256 é persistido:
+
+```json
+{
+  "id": "cak1",
+  "name": "Agente de e-mail",
+  "key": "apk_Xk2...47 caracteres...",
+  "keyPrefix": "apk_Xk2pQ9aB",
+  "user": { "id": "cus7", "name": "Agente de E-mail", "email": "agente@opusce.com.br", "role": "OPERATIONAL", "status": "ACTIVE" },
+  "lastUsedAt": null,
+  "revokedAt": null,
+  "createdAt": "2026-09-18T12:00:00.000Z"
+}
+```
+
+Os itens de `GET /api-keys` têm a mesma forma, sem `key`. `lastUsedAt` é atualizado no máximo uma
+vez por minuto por chave.
 
 ## Organizações (ADMIN)
 

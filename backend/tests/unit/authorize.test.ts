@@ -17,7 +17,14 @@ describe('authorize middleware', () => {
       '/admin-only',
       (req, _res, next) => {
         if (role) {
-          req.auth = { userId: 'u1', role, organizationId: null, scope: { kind: 'ALL' } };
+          req.auth = {
+            userId: 'u1',
+            role,
+            organizationId: null,
+            scope: { kind: 'ALL' },
+            authKind: 'JWT',
+            apiKeyId: null,
+          };
         }
         next();
       },

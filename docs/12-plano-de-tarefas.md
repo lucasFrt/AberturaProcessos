@@ -352,6 +352,79 @@ nunca viu o projeto sobe o ambiente seguindo apenas o README; checklist pós-dep
 completo, com o item de WebSocket confirmado na aba Network.
 
 ---
+---
+
+## Fase 7 — Alimentação por IA (e-mail → processo)
+
+Contexto e decisões em `docs/13-integracao-ia-email.md`. A entrada de processos passa a ser feita
+por um agente de IA que lê a caixa de e-mail da trading; o operacional segue usando o funil.
+
+### Tarefa 23 — Chaves de API (contas de serviço)
+
+Model `ApiKey` (hash SHA-256, prefixo para exibição, usuário vinculado, `lastUsedAt`, `revokedAt`).
+`ApiKeyService` com criar/listar/revogar. `authenticate` passa a aceitar `X-Api-Key` além do
+`Bearer` JWT, populando o mesmo `req.auth` (mais `authKind` e `apiKeyId`). Rotas ADMIN
+`POST/GET/DELETE /api-keys`. Tela de administração "Chaves de API" no front.
+
+**Refs:** doc 13 (decisão 2), doc 06 (middleware), doc 05 (rotas de `/api-keys`).
+
+**Aceite:** ADMIN cria chave para um usuário OPERATIONAL e recebe o segredo uma única vez;
+`GET /processes` com `X-Api-Key` válida responde 200 e sem/errada responde 401; chave revogada
+responde 401; usuário vinculado `DISABLED` responde 403; chave para usuário CLIENT é recusada com
+400; `lastUsedAt` atualiza; testes unitários do service e do middleware e integração das rotas.
+
+---
+
+### Tarefa 24 — Origem, solicitante, data de recebimento e CPF
+
+`Process` ganha `source` (`WEB` | `EMAIL` | `API`), `requesterName`, `requesterEmail`,
+`receivedAt`; `Document` ganha `source` e `receivedAt`; `Company` ganha `documentType`
+(`CNPJ` | `CPF`) e aceita CPF com validação de dígitos. Migration com as `CHECK constraints` novas.
+`source` é derivado da autenticação (JWT → `WEB`, chave de API → `API`), nunca do payload.
+Presenters e front (gaveta, lista de documentos, cadastro de empresa) refletem os campos.
+
+**Refs:** doc 13 (decisão 7), doc 04 (schema), doc 05 (payloads).
+
+**Aceite:** processo criado pelo formulário fica `source = WEB` e via chave de API `source = API`;
+detalhe do processo devolve solicitante e `receivedAt`; documento devolve `receivedAt`; cadastro de
+empresa aceita CPF válido, recusa CPF inválido com `400 INVALID_CPF` e continua recusando CNPJ
+inválido; teste de consistência enum/CHECK cobre os arrays novos.
+
+---
+
+### Tarefa 25 — Intake por e-mail (idempotente)
+
+Model `IntakeEvent` (único por `channel + externalId`, status `PROCESSING/COMPLETED/FAILED`).
+`IntakeService` com claim/retomada (doc 13, decisão 4), resolução de empresa com cadastro
+automático de `Company`/`Organization`/`EmailDomain` (decisão 5) e resolução de processo por
+código/referência com desempate e candidatos (decisão 6). `MailAttachmentProvider` no domínio com
+implementação Microsoft Graph (client credentials) em `infra/graph/`. Rotas `/intake/*` aceitando
+JSON ou multipart (`payload` + `files`).
+
+**Refs:** doc 13 (decisões 3 a 6), doc 05 (seção "Intake"), doc 10 (`GRAPH_*`).
+
+**Aceite:** e-mail com CNPJ desconhecido cria organização, empresa e processo com documentos
+(`source = EMAIL`, `receivedAt` do e-mail) e lista tudo em `warnings`/`created`; segunda chamada
+com o mesmo `externalId` responde 200 `duplicate: true` sem criar nada; "Processo <ref>" anexa ao
+processo certo, ambíguo responde 409 com candidatos e inexistente 404 com candidatos;
+`fetchAttachments` com Graph desligado responde 503; CLIENT recebe 403 em todo `/intake/*`;
+unitários com fakes de Graph/ReceitaWS e integração dos endpoints sem rede.
+
+---
+
+### Tarefa 26 — MCP server e prompt do agente
+
+Pacote `mcp-server/` (stdio, `@modelcontextprotocol/sdk`) com as ferramentas `lookup_process`,
+`create_process_from_email`, `attach_to_process` e `get_intake_event`, configurado por
+`AP_API_URL`/`AP_API_KEY`. `docs/prompts/agente-email-haiku.md` com o prompt operacional do agente
+(classificação novo × complemento, extração de campos, tratamento de 404/409, marcação do e-mail).
+
+**Refs:** doc 13 (decisão 8 e fluxo), doc 05 (seção "Intake").
+
+**Aceite:** `npm run build` no `mcp-server/` gera o binário; `npx @modelcontextprotocol/inspector`
+lista as quatro ferramentas; uma chamada de `create_process_from_email` contra a API local cria o
+processo; o prompt cobre os três desfechos (criado, anexado, escalado).
+
 
 ## Ordem e paralelismo
 

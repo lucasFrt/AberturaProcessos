@@ -11,6 +11,13 @@ export interface AuthContext {
   role: Role;
   organizationId: string | null;
   scope: AccessScope;
+  /**
+   * Como a requisição se autenticou (docs/13, decisão 2). Serve para
+   * derivar `Process.source` (JWT → WEB, chave → API) e para auditoria;
+   * nunca para autorizar — papel e escopo já vêm do usuário resolvido.
+   */
+  authKind: 'JWT' | 'API_KEY';
+  apiKeyId: string | null;
 }
 
 declare global {
