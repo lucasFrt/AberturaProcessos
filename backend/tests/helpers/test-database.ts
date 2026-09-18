@@ -6,6 +6,7 @@ import type { PrismaClient } from '@prisma/client';
  */
 export async function truncateAll(prisma: PrismaClient): Promise<void> {
   const tablesInReverseFkOrder = [
+    'intake_events',
     'process_history',
     'documents',
     'processes',

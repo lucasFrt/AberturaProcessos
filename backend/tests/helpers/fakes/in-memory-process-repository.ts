@@ -154,6 +154,18 @@ export class InMemoryProcessRepository implements ProcessRepository {
     return process ? this.toDetail(process) : null;
   }
 
+  async findExactByRef(ref: string): Promise<ProcessListItem[]> {
+    const needle = ref.trim().toLowerCase();
+    if (needle.length === 0) return [];
+    return this.items
+      .filter(
+        (item) =>
+          item.deletedAt === null &&
+          (item.code.toLowerCase() === needle || item.reference.trim().toLowerCase() === needle),
+      )
+      .map((item) => this.toListItem(item));
+  }
+
   async list(
     filters: ProcessFilters,
     scope: AccessScope,

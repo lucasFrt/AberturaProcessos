@@ -68,6 +68,7 @@ module.exports = tseslint.config(
             '@/infra/storage/*',
             '@/infra/realtime/*',
             '@/infra/cnpj/*',
+            '@/infra/graph/*',
           ],
         },
       ],

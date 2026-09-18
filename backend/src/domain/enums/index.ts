@@ -44,3 +44,15 @@ export type CompanyDocumentType = (typeof COMPANY_DOCUMENT_TYPES)[number];
  */
 export const RECORD_SOURCES = ['WEB', 'EMAIL', 'API'] as const;
 export type RecordSource = (typeof RECORD_SOURCES)[number];
+
+/** Canal de origem de um `IntakeEvent` (docs/13, decisão 4). Só e-mail no v1. */
+export const INTAKE_CHANNELS = ['EMAIL'] as const;
+export type IntakeChannel = (typeof INTAKE_CHANNELS)[number];
+
+/** O que o e-mail pediu: abrir processo ou complementar um existente. */
+export const INTAKE_EVENT_KINDS = ['PROCESS', 'ATTACHMENT'] as const;
+export type IntakeEventKind = (typeof INTAKE_EVENT_KINDS)[number];
+
+/** PROCESSING é o "claim" do evento; FAILED permite retomar (docs/13, decisão 4). */
+export const INTAKE_EVENT_STATUSES = ['PROCESSING', 'COMPLETED', 'FAILED'] as const;
+export type IntakeEventStatus = (typeof INTAKE_EVENT_STATUSES)[number];

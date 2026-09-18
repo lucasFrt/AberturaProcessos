@@ -176,7 +176,28 @@ CNPJ_LOOKUP_BASE_URL=https://receitaws.com.br/v1
 CNPJ_LOOKUP_TOKEN=
 CNPJ_LOOKUP_TIMEOUT_MS=10000
 CNPJ_LOOKUP_CACHE_TTL_MINUTES=60
+
+# ── Intake por e-mail: anexos via Microsoft Graph (docs/13, decisão 3) ─
+GRAPH_INTAKE_ENABLED=false
+GRAPH_TENANT_ID=
+GRAPH_CLIENT_ID=
+GRAPH_CLIENT_SECRET=
+GRAPH_MAILBOX=processos@opusce.com.br
+GRAPH_TIMEOUT_MS=30000
 ```
+
+Sobre as variáveis `GRAPH_*` (docs/13, seção "Configuração"):
+
+- São credenciais de **aplicação** (client credentials) de um registro próprio no Entra ID, com a
+  permissão de aplicação `Mail.Read` e consentimento de administrador. **Não** reaproveitar
+  `MICROSOFT_CLIENT_ID` do login social: aquele é um app delegado, com permissões de usuário.
+- Obrigatório restringir o app à caixa do agente com `New-ApplicationAccessPolicy` no Exchange
+  Online; sem isso `Mail.Read` de aplicação lê todas as caixas do tenant.
+- Com `GRAPH_INTAKE_ENABLED=true`, as quatro variáveis (`TENANT_ID`, `CLIENT_ID`, `CLIENT_SECRET`,
+  `MAILBOX`) passam a ser obrigatórias e a API aborta a subida se faltar alguma — melhor que
+  descobrir na primeira chamada do agente.
+- Desligado, `POST /intake/*` com `fetchAttachments: true` responde `503 MAIL_ATTACHMENTS_DISABLED`;
+  o envio de arquivos por multipart continua funcionando.
 
 Sobre as variáveis `CNPJ_LOOKUP_*`:
 
@@ -399,6 +420,9 @@ LOG_LEVEL=silent
 # caminho "já cadastrado"; o caminho de sucesso é coberto por unit test com
 # fake de `CnpjLookupProvider`.
 CNPJ_LOOKUP_ENABLED=false
+# Intake sem Graph: `fetchAttachments` responde 503 e os testes enviam anexos
+# por multipart; o provider é coberto por unit test com `fetch` injetado.
+GRAPH_INTAKE_ENABLED=false
 ```
 
 A suíte de integração usa banco próprio (`abertura_processos_test`), que **precisa estar migrado

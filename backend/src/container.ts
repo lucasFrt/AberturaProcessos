@@ -6,6 +6,7 @@ import { AuthController } from '@/http/controllers/auth-controller';
 import { CompanyController } from '@/http/controllers/company-controller';
 import { DashboardController } from '@/http/controllers/dashboard-controller';
 import { DocumentController } from '@/http/controllers/document-controller';
+import { IntakeController } from '@/http/controllers/intake-controller';
 import { KanbanStageController } from '@/http/controllers/kanban-stage-controller';
 import { OrganizationController } from '@/http/controllers/organization-controller';
 import { ProcessController } from '@/http/controllers/process-controller';
@@ -14,12 +15,14 @@ import { UserManagementController } from '@/http/controllers/user-management-con
 import type { AuthenticateDeps } from '@/http/middlewares/authenticate';
 import type { UploadMiddlewareConfig } from '@/http/middlewares/upload';
 import { ReceitaWsCnpjLookupProvider } from '@/infra/cnpj/receitaws-cnpj-lookup-provider';
+import { GraphMailAttachmentProvider } from '@/infra/graph/graph-mail-attachment-provider';
 import { logger } from '@/infra/logger';
 import { PrismaApiKeyRepository } from '@/infra/prisma/repositories/prisma-api-key-repository';
 import { PrismaCompanyRepository } from '@/infra/prisma/repositories/prisma-company-repository';
 import { PrismaDashboardRepository } from '@/infra/prisma/repositories/prisma-dashboard-repository';
 import { PrismaDocumentRepository } from '@/infra/prisma/repositories/prisma-document-repository';
 import { PrismaEmailDomainRepository } from '@/infra/prisma/repositories/prisma-email-domain-repository';
+import { PrismaIntakeEventRepository } from '@/infra/prisma/repositories/prisma-intake-event-repository';
 import { PrismaKanbanStageRepository } from '@/infra/prisma/repositories/prisma-kanban-stage-repository';
 import { PrismaOrganizationRepository } from '@/infra/prisma/repositories/prisma-organization-repository';
 import { PrismaProcessRepository } from '@/infra/prisma/repositories/prisma-process-repository';
@@ -41,6 +44,7 @@ import { CompanyService } from '@/services/company-service';
 import { DashboardService } from '@/services/dashboard-service';
 import { DocumentService } from '@/services/document-service';
 import { DomainProvisioningService } from '@/services/domain-provisioning-service';
+import { IntakeService } from '@/services/intake-service';
 import { KanbanStageService } from '@/services/kanban-stage-service';
 import { OrganizationService } from '@/services/organization-service';
 import { ProcessService } from '@/services/process-service';
@@ -80,6 +84,7 @@ export interface Container {
   documentController: DocumentController;
   uploadMiddlewareConfig: UploadMiddlewareConfig;
   dashboardController: DashboardController;
+  intakeController: IntakeController;
 }
 
 export function buildContainer(prisma: PrismaClient): Container {
@@ -94,6 +99,7 @@ export function buildContainer(prisma: PrismaClient): Container {
   const documentRepository = new PrismaDocumentRepository(prisma);
   const dashboardRepository = new PrismaDashboardRepository(prisma);
   const apiKeyRepository = new PrismaApiKeyRepository(prisma);
+  const intakeEventRepository = new PrismaIntakeEventRepository(prisma);
 
   const passwordHasher = new BcryptPasswordHasher();
   const tokenService = new JwtTokenService();
@@ -219,6 +225,40 @@ export function buildContainer(prisma: PrismaClient): Container {
     realtimeProvider,
   });
 
+  // Intake por e-mail (docs/13). O provider de anexos só existe com
+  // GRAPH_INTAKE_ENABLED=true; `null` faz `fetchAttachments` responder 503
+  // e mantém o caminho multipart funcionando — é assim que a suíte roda.
+  const mailAttachmentProvider =
+    env.GRAPH_INTAKE_ENABLED &&
+    env.GRAPH_TENANT_ID &&
+    env.GRAPH_CLIENT_ID &&
+    env.GRAPH_CLIENT_SECRET &&
+    env.GRAPH_MAILBOX
+      ? new GraphMailAttachmentProvider(
+          {
+            tenantId: env.GRAPH_TENANT_ID,
+            clientId: env.GRAPH_CLIENT_ID,
+            clientSecret: env.GRAPH_CLIENT_SECRET,
+            mailbox: env.GRAPH_MAILBOX,
+            timeoutMs: env.GRAPH_TIMEOUT_MS,
+          },
+          logger,
+        )
+      : null;
+
+  const intakeService = new IntakeService({
+    intakeEventRepository,
+    processRepository,
+    companyRepository,
+    organizationRepository,
+    emailDomainRepository,
+    processService,
+    documentService,
+    cnpjLookupProvider,
+    mailAttachmentProvider,
+    maxAttachmentBytes: env.MAX_UPLOAD_SIZE_MB * 1024 * 1024,
+  });
+
   return {
     prisma,
     queueProvider,
@@ -239,5 +279,6 @@ export function buildContainer(prisma: PrismaClient): Container {
       maxFilesPerRequest: env.MAX_FILES_PER_REQUEST,
     },
     dashboardController: new DashboardController(dashboardService),
+    intakeController: new IntakeController(intakeService),
   };
 }

@@ -16,6 +16,7 @@ import { buildCompanyRouter } from '@/http/routes/company-routes';
 import { buildDashboardRouter } from '@/http/routes/dashboard-routes';
 import { buildDocumentRouter } from '@/http/routes/document-routes';
 import { healthRouter } from '@/http/routes/health.routes';
+import { buildIntakeRouter } from '@/http/routes/intake-routes';
 import { buildKanbanStageRouter } from '@/http/routes/kanban-stage-routes';
 import { buildOrganizationRouter } from '@/http/routes/organization-routes';
 import { buildProcessRouter } from '@/http/routes/process-routes';
@@ -118,6 +119,15 @@ export function createApp(
   apiRouter.use(
     '/documents',
     buildDocumentRouter(container.documentController, container.authenticateDeps, rateLimiters),
+  );
+  apiRouter.use(
+    '/intake',
+    buildIntakeRouter(
+      container.intakeController,
+      container.authenticateDeps,
+      rateLimiters,
+      container.uploadMiddlewareConfig,
+    ),
   );
   apiRouter.use(
     '/dashboard',

@@ -47,14 +47,21 @@ Base: `/api/v1`. Todo corpo de requisição e resposta é `application/json`, ex
 | 403 | `ACCOUNT_DISABLED` | Conta desativada ou rejeitada. |
 | 404 | `NOT_FOUND` | Recurso inexistente **ou** fora do escopo de acesso (ver RNF-01). |
 | 404 | `CNPJ_NOT_FOUND` | CNPJ válido, mas inexistente na base da Receita (`GET /companies/lookup/:cnpj`). |
+| 404 | `PROCESS_REF_NOT_FOUND` | Intake: nenhum processo com o código/referência citado. `details.candidates` traz parciais. |
+| 404 | `MAIL_MESSAGE_NOT_FOUND` | Intake: `source.externalId` não existe na caixa configurada. |
 | 409 | `CONFLICT` | Violação de unicidade ou de regra de estado. |
 | 409 | `STAGE_NOT_EMPTY` | Exclusão de etapa que ainda contém processos ativos. |
+| 409 | `PROCESS_REF_AMBIGUOUS` | Intake: mais de um processo com a referência citada. `details.candidates` lista-os. |
+| 409 | `COMPANY_INACTIVE` | Intake: o CNPJ/CPF do e-mail está cadastrado como inativo. |
+| 409 | `INTAKE_IN_PROGRESS` | Intake: a mesma mensagem está sendo processada por outra execução. |
 | 413 | `PAYLOAD_TOO_LARGE` | Upload acima de `MAX_UPLOAD_SIZE_MB`. |
 | 429 | `RATE_LIMIT_EXCEEDED` | Limite atingido. Header `Retry-After` presente. |
 | 429 | `CNPJ_LOOKUP_RATE_LIMITED` | Cota do provedor externo de consulta de CNPJ estourada. |
 | 500 | `INTERNAL_ERROR` | Falha não prevista. Nunca expõe stack trace. |
 | 503 | `CNPJ_LOOKUP_UNAVAILABLE` | Provedor de consulta de CNPJ fora do ar, em timeout ou fora do contrato. |
 | 503 | `CNPJ_LOOKUP_DISABLED` | Consulta de CNPJ desligada por configuração (`CNPJ_LOOKUP_ENABLED=false`). |
+| 503 | `MAIL_ATTACHMENTS_DISABLED` | Intake com `fetchAttachments: true` sem `GRAPH_INTAKE_ENABLED`. |
+| 503 | `MAIL_ATTACHMENTS_UNAVAILABLE` | Microsoft Graph indisponível, sem token ou falha ao baixar anexo. |
 
 > **Por que 404 e não 403 fora do escopo:** responder 403 confirmaria a existência de um processo de
 > outro cliente. Para recursos de outra Organization a API responde 404.
@@ -492,6 +499,109 @@ Antes de responder, valida escopo de acesso e que o caminho resolvido está dent
 ### `DELETE /documents/:id`
 
 OPERATIONAL, ADMIN, ou o CLIENT que enviou o arquivo. Exclusão lógica. `204`.
+
+## Intake (alimentação por IA)
+
+OPERATIONAL e ADMIN — na prática, a chave de API do agente de e-mail (docs/13). Todas as rotas
+passam por `authenticate` + `rateLimitByRole` + `authorize('OPERATIONAL', 'ADMIN')`; **não**
+passam pelo limitador de upload (30/10 min, pensado para pessoas) — um agente processando a caixa
+inteira faria dezenas de anexos em minutos.
+
+Os dois `POST` aceitam o corpo de duas formas, com a **mesma estrutura**:
+
+| `Content-Type` | Como enviar |
+| --- | --- |
+| `application/json` | O corpo é o payload. Anexos só via `fetchAttachments: true`. |
+| `multipart/form-data` | Campo de texto `payload` com o JSON + campo `files` (múltiplos). Pode combinar com `fetchAttachments`. |
+
+### `POST /intake/processes`
+
+Abre um processo a partir de um e-mail (docs/13, decisões 3 a 5).
+
+```json
+{
+  "source": { "channel": "EMAIL", "externalId": "AAMkAGI2...", "subject": "Abertura IMP-2026-0042", "receivedAt": "2026-09-18T10:32:00.000Z" },
+  "requester": { "email": "joao@clientex.com.br", "name": "João" },
+  "company": { "document": "12.345.678/0001-90", "name": "Cliente X LTDA" },
+  "requestingCompany": null,
+  "reference": "IMP-2026-0042",
+  "additionalInfo": "Carga com LI pendente. Contato: João (11) 99999-0000.",
+  "fetchAttachments": true
+}
+```
+
+- `source.externalId` é a chave de idempotência (id da mensagem no Graph). `channel` só aceita
+  `EMAIL` no v1 e é o padrão.
+- `company.document` aceita CNPJ ou CPF, com ou sem máscara. Empresa desconhecida é **cadastrada**:
+  razão social pela Receita (se `CNPJ_LOOKUP_ENABLED`), senão `company.name`, senão o próprio
+  documento; organização pelo domínio de `requester.email` (conhecido → usa; desconhecido → cria e,
+  se não for webmail público, registra o domínio com `autoApprove = false`).
+- `fetchAttachments: true` faz o servidor baixar os anexos da mensagem pelo Graph (`GRAPH_*`).
+  Anexos inline (assinaturas) são ignorados; acima de `MAX_UPLOAD_SIZE_MB` são pulados com aviso.
+
+`201` (ou `200` com `duplicate: true` se o `externalId` já foi processado):
+
+```json
+{
+  "duplicate": false,
+  "event": { "id": "cie1", "channel": "EMAIL", "externalId": "AAMkAGI2...", "kind": "PROCESS", "status": "COMPLETED", "processId": "cpr9", "result": { "documentIds": ["cdo7"], "warnings": [], "company": { "id": "cco5", "created": true }, "organization": { "id": "clo3", "created": true, "domainRegistered": true } }, "errorMessage": null, "createdAt": "...", "updatedAt": "..." },
+  "process": { "...": "mesmo formato de GET /processes/:id, com source = EMAIL" },
+  "documents": [ { "id": "cdo7", "originalName": "invoice.pdf", "mimeType": "application/pdf", "size": 91234, "receivedAt": "2026-09-18T10:32:00.000Z", "createdAt": "..." } ],
+  "company": { "id": "cco5", "created": true },
+  "organization": { "id": "clo3", "created": true, "domainRegistered": true },
+  "warnings": [ "Empresa 12.345.678/0001-90 (CLIENTE X LTDA) cadastrada automaticamente.", "Organização \"CLIENTE X LTDA\" criada automaticamente." ]
+}
+```
+
+`warnings` lista tudo que o agente deve relatar e o ADMIN revisar. Erros: `400 INVALID_CNPJ` /
+`INVALID_CPF`, `409 COMPANY_INACTIVE`, `409 INTAKE_IN_PROGRESS`, `404 MAIL_MESSAGE_NOT_FOUND`,
+`503 MAIL_ATTACHMENTS_DISABLED` / `MAIL_ATTACHMENTS_UNAVAILABLE`.
+
+### `POST /intake/attachments`
+
+Anexa documentos e/ou uma nota a um processo existente citado no e-mail (docs/13, decisão 6).
+
+```json
+{
+  "source": { "externalId": "AAMkAGI3...", "receivedAt": "2026-09-19T08:00:00.000Z" },
+  "requester": { "email": "joao@clientex.com.br", "name": "João" },
+  "processRef": "Processo 123123",
+  "processId": null,
+  "note": "Segue o BL conforme solicitado.",
+  "fetchAttachments": true
+}
+```
+
+Resolução de `processRef`: `code` exato (case-insensitive) → `reference` exata → se houver mais
+de uma, desempate pela organização do domínio do solicitante → `409 PROCESS_REF_AMBIGUOUS` com
+`details.candidates` → nenhum, `404 PROCESS_REF_NOT_FOUND` com até 5 candidatos parciais. Com
+`processId` a resolução é pulada. `note` é acrescentada a `additionalInfo` com o carimbo
+`--- E-mail de João <joao@clientex.com.br> em 19/09/2026 05:00 ---` e gera `PROCESS_UPDATED`.
+Sem arquivos, sem `fetchAttachments` e sem `note` → `400`.
+
+Resposta: mesmo envelope de `POST /intake/processes` (`event.kind = "ATTACHMENT"`,
+`company`/`organization` sempre `null`). Uma retentativa do mesmo `externalId` depois de um 404/409
+(evento `FAILED`) é aceita e reprocessa — é assim que o agente responde a um 409 escolhendo um
+`processId`.
+
+### `GET /intake/processes/lookup`
+
+Candidatos para o agente conferir antes de decidir entre abrir e complementar. Query: `ref`
+(código ou referência), `companyDocument` (filtra pelo CNPJ/CPF cliente), `limit` (padrão 5, máx.
+20). Exige `ref` ou `companyDocument`.
+
+```json
+{ "matches": [ { "matchedBy": "CODE", "process": { "...": "item de listagem" } }, { "matchedBy": "PARTIAL", "process": { "...": "" } } ] }
+```
+
+`matchedBy`: `CODE` (código exato), `REFERENCE` (referência exata), `PARTIAL` (contém).
+
+### `GET /intake/events`
+
+Eventos de intake, mais recentes primeiro. Filtros: `externalId`, `status`
+(`PROCESSING | COMPLETED | FAILED`), `processId`, paginação padrão. Serve para o agente checar se
+uma mensagem já foi processada (`externalId`) antes de gastar trabalho, e para o operacional
+auditar o que a IA fez.
 
 ## Dashboard (ADMIN)
 

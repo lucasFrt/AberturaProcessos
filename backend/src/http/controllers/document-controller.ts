@@ -14,8 +14,12 @@ function decodeOriginalName(originalName: string): string {
   return Buffer.from(originalName, 'latin1').toString('utf8');
 }
 
-/** Extrai os arquivos do Multer (`req.files`, `memoryStorage`) já validados pelo middleware. */
-function filesFromRequest(req: Request): UploadFileInput[] {
+/**
+ * Extrai os arquivos do Multer (`req.files`, `memoryStorage`) já validados
+ * pelo middleware. Exportada porque o intake (docs/13) recebe multipart no
+ * mesmo formato e reaproveita a mesma decodificação de nome.
+ */
+export function filesFromRequest(req: Request): UploadFileInput[] {
   const files = req.files;
   if (!Array.isArray(files)) {
     return [];

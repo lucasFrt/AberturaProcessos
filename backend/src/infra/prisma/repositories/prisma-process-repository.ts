@@ -258,6 +258,27 @@ export class PrismaProcessRepository implements ProcessRepository {
     return { items: rows.map(mapListItem), total };
   }
 
+  /**
+   * `equals` é case-insensitive no SQL Server com a collation padrão
+   * (`SQL_Latin1_General_CP1_CI_AS`), então "prc-2026-00042" e o `code`
+   * gravado em maiúsculas casam sem `LOWER()` — que impediria o uso do
+   * índice único em `code`.
+   */
+  async findExactByRef(ref: string): Promise<ProcessListItem[]> {
+    const trimmed = ref.trim();
+    if (trimmed.length === 0) return [];
+    const rows = await this.prisma.process.findMany({
+      where: {
+        deletedAt: null,
+        OR: [{ code: { equals: trimmed } }, { reference: { equals: trimmed } }],
+      },
+      include: LIST_ITEM_INCLUDE,
+      orderBy: [{ createdAt: 'desc' }],
+      take: 50,
+    });
+    return rows.map(mapListItem);
+  }
+
   async board(
     filters: ProcessFilters,
     scope: AccessScope,

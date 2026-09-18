@@ -31,6 +31,13 @@ export interface ProcessRepository {
     pagination: PaginationParams,
     sort: ProcessSort,
   ): Promise<Page<ProcessListItem>>;
+  /**
+   * Processos ativos cujo `code` OU `reference` é exatamente `ref`
+   * (comparação sem distinção de maiúsculas). Usado pelo intake para
+   * resolver "Processo 123123" citado num e-mail (docs/13, decisão 6).
+   * Escopo é sempre ALL: o intake é interno (OPERATIONAL/ADMIN).
+   */
+  findExactByRef(ref: string): Promise<ProcessListItem[]>;
   /** Uma entrada por KanbanStage, com `total` real e até `limitPerStage` itens (docs/05). */
   board(
     filters: ProcessFilters,

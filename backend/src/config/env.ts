@@ -115,6 +115,19 @@ export const envSchema = z.object({
   CNPJ_LOOKUP_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
   /** Cache em memória por CNPJ — protege a cota do plano gratuito. `0` desliga. */
   CNPJ_LOOKUP_CACHE_TTL_MINUTES: z.coerce.number().int().nonnegative().default(60),
+
+  // ── Intake por e-mail: anexos via Microsoft Graph (docs/13, decisão 3) ─
+  // Credenciais de APLICAÇÃO (client credentials), não as do login social
+  // (MICROSOFT_CLIENT_ID é um app delegado, com permissões diferentes).
+  // Desligado, `fetchAttachments: true` responde 503 MAIL_ATTACHMENTS_DISABLED
+  // e o intake continua aceitando arquivos por multipart.
+  GRAPH_INTAKE_ENABLED: booleanFromEnv(false),
+  GRAPH_TENANT_ID: z.string().optional(),
+  GRAPH_CLIENT_ID: z.string().optional(),
+  GRAPH_CLIENT_SECRET: z.string().optional(),
+  /** UPN da caixa lida pelo agente, ex.: processos@opusce.com.br. */
+  GRAPH_MAILBOX: z.string().optional(),
+  GRAPH_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
 });
 
 const refinedEnvSchema = envSchema.superRefine((data, ctx) => {
@@ -125,6 +138,25 @@ const refinedEnvSchema = envSchema.superRefine((data, ctx) => {
       path: ['COOKIE_SECURE'],
       message: 'COOKIE_SECURE precisa ser true em produção.',
     });
+  }
+
+  // Ligar o Graph sem credenciais falharia só na primeira chamada do agente,
+  // em produção; melhor abortar a subida com mensagem clara (docs/10).
+  if (data.GRAPH_INTAKE_ENABLED) {
+    for (const key of [
+      'GRAPH_TENANT_ID',
+      'GRAPH_CLIENT_ID',
+      'GRAPH_CLIENT_SECRET',
+      'GRAPH_MAILBOX',
+    ] as const) {
+      if (!data[key]) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [key],
+          message: `${key} é obrigatória quando GRAPH_INTAKE_ENABLED=true.`,
+        });
+      }
+    }
   }
 });
 

@@ -105,6 +105,7 @@ model User {
   deletedDocuments     Document[]       @relation("DocumentDeletedBy")
   apiKeys              ApiKey[]         @relation("ApiKeyUser")
   createdApiKeys       ApiKey[]         @relation("ApiKeyCreatedBy")
+  intakeEvents         IntakeEvent[]    @relation("IntakeEventCreatedBy")
 
   @@index([organizationId])
   @@index([status])
@@ -251,8 +252,9 @@ model Process {
   createdBy         User        @relation("ProcessCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
   deletedBy         User?       @relation("ProcessDeletedBy", fields: [deletedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  history   ProcessHistory[]
-  documents Document[]
+  history      ProcessHistory[]
+  documents    Document[]
+  intakeEvents IntakeEvent[]
 
   @@index([currentStageId])
   @@index([clientCompanyId])
@@ -261,6 +263,40 @@ model Process {
   @@index([deletedAt])
   @@index([createdAt])
   @@map("processes")
+}
+
+/// Um e-mail (ou outra mensagem externa) recebido pelo intake (docs/13,
+/// decisão 4). Único por (channel, externalId): é o que torna o agente
+/// idempotente. `status` PROCESSING é o "claim"; FAILED permite retomar.
+model IntakeEvent {
+  id             String    @id @default(cuid()) @db.NVarChar(30)
+  /// EMAIL
+  channel        String    @db.NVarChar(20)
+  /// id da mensagem no canal (Microsoft Graph). NVarChar(400) cabe no limite de índice do SQL Server.
+  externalId     String    @db.NVarChar(400)
+  /// PROCESS (abertura) | ATTACHMENT (complemento de processo existente)
+  kind           String    @db.NVarChar(20)
+  /// PROCESSING | COMPLETED | FAILED
+  status         String    @db.NVarChar(20)
+  subject        String?   @db.NVarChar(500)
+  requesterName  String?   @db.NVarChar(200)
+  requesterEmail String?   @db.NVarChar(255)
+  receivedAt     DateTime?
+  processId      String?   @db.NVarChar(30)
+  /// JSON serializado com o resultado (documentIds, warnings, o que foi criado)
+  result         String?   @db.NVarChar(Max)
+  errorMessage   String?   @db.NVarChar(1000)
+  createdById    String    @db.NVarChar(30)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  process   Process? @relation(fields: [processId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdBy User     @relation("IntakeEventCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([channel, externalId])
+  @@index([processId])
+  @@index([status])
+  @@map("intake_events")
 }
 
 /// Trilha de auditoria append-only.
