@@ -31,7 +31,7 @@ SQL Server   Disco (uploads)   Redis (Docker) ──> SMTP
 | SQL Server 2022 | Instância local. Habilitar autenticação SQL se a aplicação for usar usuário SQL. |
 | Docker Desktop / Docker Engine | Para o Redis. Configurar para iniciar com o sistema. |
 | NSSM | `nssm.exe` em `C:\Tools\nssm\`. |
-| Certificado TLS | Instalado no IIS e vinculado ao site na porta 443. |
+| Certificado TLS | Instalado no IIS e vinculado ao site na porta 443. **De CA pública** (ex.: win-acme / Let's Encrypt): o agente de intake chama a API a partir da nuvem da Anthropic e o `curl` de lá rejeita certificado autoassinado (docs/14). |
 
 URL Rewrite e ARR **não** vêm com o IIS: precisam ser instalados (Web Platform Installer ou download
 direto da Microsoft). Sem ARR não há reverse proxy.
@@ -298,6 +298,17 @@ Pontos de atenção que costumam custar horas:
   causa erro 500 no IIS.
 - **`trust proxy`.** Com `app.set('trust proxy', 1)` no Express, o rate limit conta o IP real; sem
   isso, todas as requisições parecem vir de `127.0.0.1` e um único usuário estoura o limite de todos.
+- **Timeout do proxy do ARR.** O padrão é 30 s. `POST /api/v1/intake/*` com `fetchAttachments`
+  faz token + listagem + N downloads no Graph (até 30 s cada) e a consulta na Receita dentro de uma
+  única requisição — com anexos grandes estoura 30 s e o IIS responde 502.3 antes de a API terminar.
+  Subir para 300 s: IIS Manager → nó do servidor → Application Request Routing Cache → Server Proxy
+  Settings → *Time-out (seconds)* = 300 (ou `Set-WebConfigurationProperty
+  -Filter system.webServer/proxy -Name timeout -Value "00:05:00"`).
+- **Origem do intake (opcional, recomendado).** `/api/v1/intake/*` só é usado pelo agente; depois
+  de confirmar no log do IIS (`c-ip`) de onde vêm as chamadas da rotina, restringir com *IP Address
+  and Domain Restrictions* à faixa de saída publicada pela Anthropic (`160.79.104.0/21`,
+  https://platform.claude.com/docs/en/api/ip-addresses). Sem essa confirmação, não fechar: a doc só
+  garante a faixa para chamadas MCP/outbound, não explicitamente para o `curl` da sandbox.
 
 ## Permissões de arquivo
 

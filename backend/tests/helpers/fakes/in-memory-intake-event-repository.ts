@@ -18,6 +18,10 @@ export class InMemoryIntakeEventRepository implements IntakeEventRepository {
   readonly items: IntakeEvent[] = [];
 
   async claim(data: CreateIntakeEventData): Promise<ClaimOutcome> {
+    if (data.internetMessageId) {
+      const byMessageId = await this.findByInternetMessageId(data.channel, data.internetMessageId);
+      if (byMessageId) return { created: false, existing: byMessageId };
+    }
     const existing = await this.findByExternalId(data.channel, data.externalId);
     if (existing) return { created: false, existing };
 
@@ -46,9 +50,22 @@ export class InMemoryIntakeEventRepository implements IntakeEventRepository {
     );
   }
 
+  async findByInternetMessageId(
+    channel: IntakeChannel,
+    internetMessageId: string,
+  ): Promise<IntakeEvent | null> {
+    return (
+      this.items.find(
+        (item) => item.channel === channel && item.internetMessageId === internetMessageId,
+      ) ?? null
+    );
+  }
+
   async update(id: string, data: UpdateIntakeEventData): Promise<IntakeEvent> {
     const event = this.items.find((item) => item.id === id);
     if (!event) throw new Error(`Fake: evento ${id} não existe.`);
+    if (data.externalId !== undefined) event.externalId = data.externalId;
+    if (data.kind !== undefined) event.kind = data.kind;
     if (data.status !== undefined) event.status = data.status;
     if (data.processId !== undefined) event.processId = data.processId;
     if (data.result !== undefined) event.result = data.result;
@@ -63,6 +80,8 @@ export class InMemoryIntakeEventRepository implements IntakeEventRepository {
   ): Promise<Page<IntakeEvent>> {
     const filtered = this.items.filter((item) => {
       if (filters.externalId && item.externalId !== filters.externalId) return false;
+      if (filters.internetMessageId && item.internetMessageId !== filters.internetMessageId)
+        return false;
       if (filters.status && item.status !== filters.status) return false;
       if (filters.processId && item.processId !== filters.processId) return false;
       return true;

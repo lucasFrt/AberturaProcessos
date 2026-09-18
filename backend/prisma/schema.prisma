@@ -274,6 +274,9 @@ model IntakeEvent {
   channel        String    @db.NVarChar(20)
   /// id da mensagem no canal (Microsoft Graph). NVarChar(400) cabe no limite de índice do SQL Server.
   externalId     String    @db.NVarChar(400)
+  /// Message-ID RFC 5322 (chave secundária de idempotência): estável quando a mensagem é movida
+  /// de pasta ou lida em outra caixa — o id do Graph não é (docs/14).
+  internetMessageId String? @db.NVarChar(400)
   /// PROCESS (abertura) | ATTACHMENT (complemento de processo existente)
   kind           String    @db.NVarChar(20)
   /// PROCESSING | COMPLETED | FAILED
@@ -294,6 +297,7 @@ model IntakeEvent {
   createdBy User     @relation("IntakeEventCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([channel, externalId])
+  @@index([channel, internetMessageId])
   @@index([processId])
   @@index([status])
   @@map("intake_events")

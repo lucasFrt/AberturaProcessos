@@ -13,6 +13,8 @@ import { paginationQuerySchema } from '@/http/schemas/pagination-schemas';
 const sourceSchema = z.object({
   channel: z.enum(INTAKE_CHANNELS).default('EMAIL'),
   externalId: z.string().trim().min(1, 'source.externalId é obrigatório.').max(400),
+  /** Message-ID RFC 5322 (chave secundária de idempotência, docs/14). */
+  internetMessageId: z.string().trim().min(1).max(400).nullable().optional(),
   subject: z.string().trim().max(500).nullable().optional(),
   receivedAt: z.coerce.date(),
 });
@@ -57,7 +59,6 @@ export const intakeLookupQuerySchema = z
   .object({
     ref: z.string().trim().min(1).max(255).optional(),
     companyDocument: z.string().trim().min(11).max(20).optional(),
-    requesterEmail: z.string().trim().toLowerCase().email().optional(),
     limit: z.coerce.number().int().positive().max(20).default(5),
   })
   .refine((data) => Boolean(data.ref) || Boolean(data.companyDocument), {
@@ -68,6 +69,7 @@ export type IntakeLookupQuery = z.infer<typeof intakeLookupQuerySchema>;
 
 export const intakeListEventsQuerySchema = paginationQuerySchema.extend({
   externalId: z.string().trim().min(1).max(400).optional(),
+  internetMessageId: z.string().trim().min(1).max(400).optional(),
   status: z.enum(INTAKE_EVENT_STATUSES).optional(),
   processId: z.string().trim().min(1).optional(),
 });

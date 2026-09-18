@@ -44,6 +44,8 @@ export interface IntakeSource {
   channel: IntakeChannel;
   /** Id da mensagem no canal (Graph). Chave de idempotência. */
   externalId: string;
+  /** Message-ID RFC 5322 — chave secundária, estável entre pastas/caixas (docs/14). */
+  internetMessageId?: string | null | undefined;
   subject?: string | null | undefined;
   /** Data de recebimento do e-mail. */
   receivedAt: Date;
@@ -108,7 +110,6 @@ export interface ProcessMatch {
 export interface LookupProcessQuery {
   ref?: string | undefined;
   companyDocument?: string | undefined;
-  requesterEmail?: string | undefined;
   limit: number;
 }
 
@@ -379,6 +380,7 @@ export class IntakeService {
     const outcome = await this.deps.intakeEventRepository.claim({
       channel: source.channel,
       externalId: source.externalId,
+      internetMessageId: source.internetMessageId ?? null,
       kind,
       status: 'PROCESSING',
       subject: source.subject ?? null,
@@ -404,9 +406,14 @@ export class IntakeService {
       );
     }
     // FAILED: retoma. Se um processo já foi criado antes da falha, reaproveita.
+    // O id do Graph pode ter mudado (evento achado por internetMessageId) e a
+    // ação pode ser outra (ex.: 404 em ATTACHMENT → agente reclassificou como
+    // PROCESS): o evento passa a refletir a tentativa atual.
     const resumed = await this.deps.intakeEventRepository.update(existing.id, {
       status: 'PROCESSING',
       errorMessage: null,
+      kind,
+      ...(existing.externalId !== source.externalId ? { externalId: source.externalId } : {}),
     });
     return { kind: 'claimed', event: resumed, resumeProcessId: existing.processId };
   }
@@ -495,7 +502,9 @@ export class IntakeService {
       );
     }
 
-    const outcome = await provider.listAttachments(input.source.externalId);
+    const outcome = await provider.listAttachments(input.source.externalId, {
+      internetMessageId: input.source.internetMessageId ?? null,
+    });
     switch (outcome.kind) {
       case 'MESSAGE_NOT_FOUND':
         throw new NotFoundError(

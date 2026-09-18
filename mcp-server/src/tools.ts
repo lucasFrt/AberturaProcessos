@@ -23,6 +23,13 @@ const receivedAtField = z
   .min(1)
   .describe('Data/hora em que o e-mail foi recebido, em ISO 8601 (ex.: "2026-09-18T10:32:00Z").');
 
+const internetMessageIdField = z
+  .string()
+  .optional()
+  .describe(
+    'Message-ID RFC 5322 da mensagem (campo internetMessageId do conector, com os "<" ">"). Chave secundária de idempotência: sobrevive à mensagem ser movida de pasta. Envie sempre que disponível.',
+  );
+
 const requesterFields = {
   requesterEmail: z.string().email().describe('E-mail do remetente (quem pediu).'),
   requesterName: z.string().optional().describe('Nome do remetente, se aparecer no e-mail.'),
@@ -169,6 +176,7 @@ export function registerTools(server: McpServer, api: ApiClient): void {
         'Abre um processo novo com os dados extraídos do e-mail. A empresa é identificada pelo CNPJ/CPF: se não estiver cadastrada, o servidor cadastra (empresa, organização e domínio) e relata em warnings. Idempotente por externalId: repetir a chamada para a mesma mensagem devolve duplicate=true sem criar nada. Anexos são baixados pelo servidor (fetchAttachments=true).',
       inputSchema: {
         externalId: externalIdField,
+        internetMessageId: internetMessageIdField,
         receivedAt: receivedAtField,
         subject: z.string().optional().describe('Assunto do e-mail.'),
         ...requesterFields,
@@ -211,6 +219,7 @@ export function registerTools(server: McpServer, api: ApiClient): void {
         source: {
           channel: 'EMAIL',
           externalId: input.externalId,
+          internetMessageId: input.internetMessageId ?? null,
           subject: input.subject ?? null,
           receivedAt: toIso(input.receivedAt),
         },
@@ -240,6 +249,7 @@ export function registerTools(server: McpServer, api: ApiClient): void {
         'Anexa os anexos do e-mail e/ou uma nota a um processo já aberto, identificado pelo código ou pela referência citada ("Processo 123123 documento em anexo"). Se a referência for ambígua a resposta traz candidatos (code PROCESS_REF_AMBIGUOUS): escolha e chame de novo com processId. Se não existir (PROCESS_REF_NOT_FOUND) avalie os candidatos parciais ou trate como processo novo. Idempotente por externalId.',
       inputSchema: {
         externalId: externalIdField,
+        internetMessageId: internetMessageIdField,
         receivedAt: receivedAtField,
         subject: z.string().optional(),
         ...requesterFields,
@@ -267,6 +277,7 @@ export function registerTools(server: McpServer, api: ApiClient): void {
         source: {
           channel: 'EMAIL',
           externalId: input.externalId,
+          internetMessageId: input.internetMessageId ?? null,
           subject: input.subject ?? null,
           receivedAt: toIso(input.receivedAt),
         },

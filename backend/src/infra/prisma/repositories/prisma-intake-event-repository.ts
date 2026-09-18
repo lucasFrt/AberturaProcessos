@@ -18,6 +18,7 @@ interface IntakeEventRow {
   id: string;
   channel: string;
   externalId: string;
+  internetMessageId: string | null;
   kind: string;
   status: string;
   subject: string | null;
@@ -55,6 +56,7 @@ function toDomain(row: IntakeEventRow): IntakeEvent {
     id: row.id,
     channel: row.channel as IntakeChannel,
     externalId: row.externalId,
+    internetMessageId: row.internetMessageId,
     kind: row.kind as IntakeEventKind,
     status: row.status as IntakeEventStatus,
     subject: row.subject,
@@ -88,6 +90,14 @@ export class PrismaIntakeEventRepository implements IntakeEventRepository {
    * execuções do agente passam pela checagem e as duas inserem.
    */
   async claim(data: CreateIntakeEventData): Promise<ClaimOutcome> {
+    // Chave secundária primeiro (docs/14): a mesma mensagem com id do Graph
+    // novo (movida de pasta) tem de cair no evento já existente. Não é
+    // unique no banco — é uma checagem best-effort antes da chave primária.
+    if (data.internetMessageId) {
+      const byMessageId = await this.findByInternetMessageId(data.channel, data.internetMessageId);
+      if (byMessageId) return { created: false, existing: byMessageId };
+    }
+
     try {
       const row = await this.prisma.intakeEvent.create({ data });
       return { created: true, event: toDomain(row) };
@@ -111,8 +121,21 @@ export class PrismaIntakeEventRepository implements IntakeEventRepository {
     return row ? toDomain(row) : null;
   }
 
+  async findByInternetMessageId(
+    channel: IntakeChannel,
+    internetMessageId: string,
+  ): Promise<IntakeEvent | null> {
+    const row = await this.prisma.intakeEvent.findFirst({
+      where: { channel, internetMessageId },
+      orderBy: { createdAt: 'asc' },
+    });
+    return row ? toDomain(row) : null;
+  }
+
   async update(id: string, data: UpdateIntakeEventData): Promise<IntakeEvent> {
     const updateData: Prisma.IntakeEventUpdateInput = {
+      ...(data.externalId !== undefined ? { externalId: data.externalId } : {}),
+      ...(data.kind !== undefined ? { kind: data.kind } : {}),
       ...(data.status !== undefined ? { status: data.status } : {}),
       ...(data.processId !== undefined
         ? data.processId === null
@@ -134,6 +157,7 @@ export class PrismaIntakeEventRepository implements IntakeEventRepository {
   ): Promise<Page<IntakeEvent>> {
     const where: Prisma.IntakeEventWhereInput = {
       ...(filters.externalId ? { externalId: filters.externalId } : {}),
+      ...(filters.internetMessageId ? { internetMessageId: filters.internetMessageId } : {}),
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.processId ? { processId: filters.processId } : {}),
     };

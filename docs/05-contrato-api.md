@@ -503,9 +503,10 @@ OPERATIONAL, ADMIN, ou o CLIENT que enviou o arquivo. Exclusão lógica. `204`.
 ## Intake (alimentação por IA)
 
 OPERATIONAL e ADMIN — na prática, a chave de API do agente de e-mail (docs/13). Todas as rotas
-passam por `authenticate` + `rateLimitByRole` + `authorize('OPERATIONAL', 'ADMIN')`; **não**
-passam pelo limitador de upload (30/10 min, pensado para pessoas) — um agente processando a caixa
-inteira faria dezenas de anexos em minutos.
+passam por `apiKeyFailureLimiter` (só respostas 401 contam, por IP; `RATE_LIMIT_API_KEY_FAILURE_*`)
+→ `authenticate` → `rateLimitByRole` → `authorize('OPERATIONAL', 'ADMIN')`; **não** passam pelo
+limitador de upload (30/10 min, pensado para pessoas) — um agente processando a caixa inteira faria
+dezenas de anexos em minutos.
 
 Os dois `POST` aceitam o corpo de duas formas, com a **mesma estrutura**:
 
@@ -520,7 +521,7 @@ Abre um processo a partir de um e-mail (docs/13, decisões 3 a 5).
 
 ```json
 {
-  "source": { "channel": "EMAIL", "externalId": "AAMkAGI2...", "subject": "Abertura IMP-2026-0042", "receivedAt": "2026-09-18T10:32:00.000Z" },
+  "source": { "channel": "EMAIL", "externalId": "AAMkAGI2...", "internetMessageId": "<abc123@mail.clientex.com.br>", "subject": "Abertura IMP-2026-0042", "receivedAt": "2026-09-18T10:32:00.000Z" },
   "requester": { "email": "joao@clientex.com.br", "name": "João" },
   "company": { "document": "12.345.678/0001-90", "name": "Cliente X LTDA" },
   "requestingCompany": null,
@@ -530,8 +531,14 @@ Abre um processo a partir de um e-mail (docs/13, decisões 3 a 5).
 }
 ```
 
-- `source.externalId` é a chave de idempotência (id da mensagem no Graph). `channel` só aceita
-  `EMAIL` no v1 e é o padrão.
+- `source.externalId` é a chave de idempotência (id da mensagem no Graph — o campo `id` bruto que o
+  conector devolve, terminado em `=`, não a URI com `%3D`). `channel` só aceita `EMAIL` no v1 e é o
+  padrão.
+- `source.internetMessageId` (opcional, recomendado): Message-ID RFC 5322 do e-mail. É a **chave
+  secundária** de idempotência: o id do Graph muda quando a mensagem é movida de pasta; este não. Se
+  um evento com o mesmo `internetMessageId` já existir, a chamada é tratada como duplicata (ou
+  retomada, se `FAILED`) mesmo com `externalId` diferente — e o backend também o usa para localizar
+  a mensagem no Graph quando o `externalId` não é mais encontrado.
 - `company.document` aceita CNPJ ou CPF, com ou sem máscara. Empresa desconhecida é **cadastrada**:
   razão social pela Receita (se `CNPJ_LOOKUP_ENABLED`), senão `company.name`, senão o próprio
   documento; organização pelo domínio de `requester.email` (conhecido → usa; desconhecido → cria e,
@@ -544,7 +551,7 @@ Abre um processo a partir de um e-mail (docs/13, decisões 3 a 5).
 ```json
 {
   "duplicate": false,
-  "event": { "id": "cie1", "channel": "EMAIL", "externalId": "AAMkAGI2...", "kind": "PROCESS", "status": "COMPLETED", "processId": "cpr9", "result": { "documentIds": ["cdo7"], "warnings": [], "company": { "id": "cco5", "created": true }, "organization": { "id": "clo3", "created": true, "domainRegistered": true } }, "errorMessage": null, "createdAt": "...", "updatedAt": "..." },
+  "event": { "id": "cie1", "channel": "EMAIL", "externalId": "AAMkAGI2...", "internetMessageId": "<abc123@mail.clientex.com.br>", "kind": "PROCESS", "status": "COMPLETED", "processId": "cpr9", "result": { "documentIds": ["cdo7"], "warnings": [], "company": { "id": "cco5", "created": true }, "organization": { "id": "clo3", "created": true, "domainRegistered": true } }, "errorMessage": null, "createdAt": "...", "updatedAt": "..." },
   "process": { "...": "mesmo formato de GET /processes/:id, com source = EMAIL" },
   "documents": [ { "id": "cdo7", "originalName": "invoice.pdf", "mimeType": "application/pdf", "size": 91234, "receivedAt": "2026-09-18T10:32:00.000Z", "createdAt": "..." } ],
   "company": { "id": "cco5", "created": true },
@@ -580,9 +587,10 @@ de uma, desempate pela organização do domínio do solicitante → `409 PROCESS
 Sem arquivos, sem `fetchAttachments` e sem `note` → `400`.
 
 Resposta: mesmo envelope de `POST /intake/processes` (`event.kind = "ATTACHMENT"`,
-`company`/`organization` sempre `null`). Uma retentativa do mesmo `externalId` depois de um 404/409
-(evento `FAILED`) é aceita e reprocessa — é assim que o agente responde a um 409 escolhendo um
-`processId`.
+`company`/`organization` sempre `null`). Uma retentativa do mesmo `externalId` (ou do mesmo
+`internetMessageId`) depois de um 404/409 (evento `FAILED`) é aceita e reprocessa — é assim que o
+agente responde a um 409 escolhendo um `processId`, ou reclassifica um 404 como processo novo: o
+evento passa a refletir a tentativa atual (`kind`, `externalId`).
 
 ### `GET /intake/processes/lookup`
 
@@ -598,7 +606,7 @@ Candidatos para o agente conferir antes de decidir entre abrir e complementar. Q
 
 ### `GET /intake/events`
 
-Eventos de intake, mais recentes primeiro. Filtros: `externalId`, `status`
+Eventos de intake, mais recentes primeiro. Filtros: `externalId`, `internetMessageId`, `status`
 (`PROCESSING | COMPLETED | FAILED`), `processId`, paginação padrão. Serve para o agente checar se
 uma mensagem já foi processada (`externalId`) antes de gastar trabalho, e para o operacional
 auditar o que a IA fez.

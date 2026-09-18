@@ -1,4 +1,5 @@
 import type {
+  ListAttachmentsOptions,
   MailAttachment,
   MailAttachmentProvider,
   MailAttachmentsOutcome,
@@ -7,15 +8,21 @@ import type {
 /**
  * Dublê de `MailAttachmentProvider` (docs/09): nenhuma chamada ao Graph.
  * `outcome` é o que a próxima leitura devolve; `calls` registra os ids de
- * mensagem consultados.
+ * mensagem consultados e `optionsSeen` as opções (ex.: `internetMessageId`)
+ * recebidas, para provar que o service repassa a chave secundária.
  */
 export class FakeMailAttachmentProvider implements MailAttachmentProvider {
   readonly calls: string[] = [];
-  outcome: MailAttachmentsOutcome = { kind: 'OK', attachments: [] };
+  readonly optionsSeen: ListAttachmentsOptions[] = [];
+  outcome: MailAttachmentsOutcome = { kind: 'OK', attachments: [], messageId: 'fake' };
 
-  async listAttachments(messageId: string): Promise<MailAttachmentsOutcome> {
+  async listAttachments(
+    messageId: string,
+    options: ListAttachmentsOptions = {},
+  ): Promise<MailAttachmentsOutcome> {
     this.calls.push(messageId);
-    return this.outcome;
+    this.optionsSeen.push(options);
+    return this.outcome.kind === 'OK' ? { ...this.outcome, messageId } : this.outcome;
   }
 
   respondWith(
@@ -23,6 +30,7 @@ export class FakeMailAttachmentProvider implements MailAttachmentProvider {
   ): void {
     this.outcome = {
       kind: 'OK',
+      messageId: 'fake',
       attachments: attachments.map((attachment, index) => ({
         id: attachment.id ?? `att-${index + 1}`,
         name: attachment.name,

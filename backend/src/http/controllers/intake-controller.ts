@@ -91,7 +91,6 @@ export class IntakeController {
       const matches = await this.service.lookupProcess({
         ref: query.ref,
         companyDocument: query.companyDocument,
-        requesterEmail: query.requesterEmail,
         limit: query.limit,
       });
       res.status(200).json({ matches: matches.map(presentProcessMatch) });
@@ -108,7 +107,12 @@ export class IntakeController {
     try {
       const query = req.query as unknown as IntakeListEventsQuery;
       const page = await this.service.listEvents(
-        { externalId: query.externalId, status: query.status, processId: query.processId },
+        {
+          externalId: query.externalId,
+          internetMessageId: query.internetMessageId,
+          status: query.status,
+          processId: query.processId,
+        },
         { page: query.page, pageSize: query.pageSize },
       );
       res

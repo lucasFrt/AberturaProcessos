@@ -1,4 +1,5 @@
 import type {
+  ListAttachmentsOptions,
   MailAttachment,
   MailAttachmentProvider,
   MailAttachmentsOutcome,
@@ -81,7 +82,10 @@ export class GraphMailAttachmentProvider implements MailAttachmentProvider {
     private readonly fetchImpl: FetchLike = (input, init) => fetch(input, init),
   ) {}
 
-  async listAttachments(messageId: string): Promise<MailAttachmentsOutcome> {
+  async listAttachments(
+    messageId: string,
+    options: ListAttachmentsOptions = {},
+  ): Promise<MailAttachmentsOutcome> {
     let token: string;
     try {
       token = await this.getAccessToken();
@@ -90,6 +94,76 @@ export class GraphMailAttachmentProvider implements MailAttachmentProvider {
       return { kind: 'UNAVAILABLE', reason: 'Falha de autenticação no Microsoft Graph.' };
     }
 
+    const outcome = await this.listAttachmentsById(messageId, token);
+    if (outcome.kind !== 'MESSAGE_NOT_FOUND' || !options.internetMessageId) {
+      return outcome;
+    }
+
+    // O id do Graph muda quando a mensagem é movida de pasta (docs/14); o
+    // Message-ID RFC 5322 não. Procura na mesma caixa e tenta de novo.
+    const resolved = await this.resolveByInternetMessageId(options.internetMessageId, token);
+    if (resolved.kind !== 'FOUND') {
+      return resolved.kind === 'NOT_FOUND'
+        ? { kind: 'MESSAGE_NOT_FOUND' }
+        : { kind: 'UNAVAILABLE', reason: resolved.reason };
+    }
+    this.logger.debug(
+      { messageId, resolvedMessageId: resolved.messageId },
+      'Mensagem localizada por internetMessageId',
+    );
+    return this.listAttachmentsById(resolved.messageId, token);
+  }
+
+  private async resolveByInternetMessageId(
+    internetMessageId: string,
+    token: string,
+  ): Promise<
+    | { kind: 'FOUND'; messageId: string }
+    | { kind: 'NOT_FOUND' }
+    | { kind: 'UNAVAILABLE'; reason: string }
+  > {
+    // OData: aspas simples dentro do literal são escapadas duplicando-as.
+    const literal = internetMessageId.replace(/'/g, "''");
+    const url =
+      `${this.graphBaseUrl()}/users/${encodeURIComponent(this.config.mailbox)}/messages` +
+      `?$filter=${encodeURIComponent(`internetMessageId eq '${literal}'`)}&$select=id&$top=1`;
+
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(this.config.timeoutMs),
+      });
+    } catch (error) {
+      this.logger.warn({ err: error }, 'Falha de rede ao procurar mensagem por internetMessageId');
+      return { kind: 'UNAVAILABLE', reason: 'Falha de rede ao consultar o Microsoft Graph.' };
+    }
+    if (!response.ok) {
+      return {
+        kind: 'UNAVAILABLE',
+        reason: `Microsoft Graph respondeu HTTP ${response.status} na busca por internetMessageId.`,
+      };
+    }
+
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      return { kind: 'UNAVAILABLE', reason: 'Resposta do Microsoft Graph é inválida.' };
+    }
+    const list = isRecord(payload) ? (payload as AttachmentListResponse).value : undefined;
+    const first: unknown = Array.isArray(list) ? list[0] : undefined;
+    if (isRecord(first) && typeof first.id === 'string' && first.id.length > 0) {
+      return { kind: 'FOUND', messageId: first.id };
+    }
+    return { kind: 'NOT_FOUND' };
+  }
+
+  private async listAttachmentsById(
+    messageId: string,
+    token: string,
+  ): Promise<MailAttachmentsOutcome> {
     const base = `${this.graphBaseUrl()}/users/${encodeURIComponent(this.config.mailbox)}/messages/${encodeURIComponent(messageId)}/attachments`;
 
     let listResponse: Response;
@@ -158,7 +232,7 @@ export class GraphMailAttachmentProvider implements MailAttachmentProvider {
       });
     }
 
-    return { kind: 'OK', attachments };
+    return { kind: 'OK', attachments, messageId };
   }
 
   private parseList(

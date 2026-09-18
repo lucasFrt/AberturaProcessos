@@ -34,7 +34,10 @@ export function buildIntakeRouter(
   const uploadMiddleware = buildUploadMiddleware(uploadMiddlewareConfig);
   const multipartOrJson = multipartJsonPayload(uploadMiddleware);
 
+  // `apiKeyFailureLimiter` antes de `authenticate`: é a única rota exposta à
+  // internet só com chave de API (docs/14); conta apenas 401 por IP.
   router.use(
+    rateLimiters.apiKeyFailureLimiter,
     authenticate(authenticateDeps),
     rateLimiters.rateLimitByRole,
     authorize('OPERATIONAL', 'ADMIN'),

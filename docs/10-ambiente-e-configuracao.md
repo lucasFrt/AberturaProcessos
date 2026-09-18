@@ -168,6 +168,8 @@ RATE_LIMIT_UPLOAD_MAX=30
 RATE_LIMIT_UPLOAD_WINDOW_MINUTES=10
 RATE_LIMIT_ANONYMOUS_MAX=60
 RATE_LIMIT_ANONYMOUS_WINDOW_MINUTES=1
+RATE_LIMIT_API_KEY_FAILURE_MAX=50
+RATE_LIMIT_API_KEY_FAILURE_WINDOW_MINUTES=5
 
 # ── Consulta de CNPJ na Receita (docs/05, "Empresas / CNPJs") ─
 # Autopreenchimento de razão social / nome fantasia no cadastro de empresa.
@@ -182,7 +184,7 @@ GRAPH_INTAKE_ENABLED=false
 GRAPH_TENANT_ID=
 GRAPH_CLIENT_ID=
 GRAPH_CLIENT_SECRET=
-GRAPH_MAILBOX=processos@opusce.com.br
+GRAPH_MAILBOX=opusoperacional@opusce.com.br
 GRAPH_TIMEOUT_MS=30000
 ```
 
@@ -198,6 +200,12 @@ Sobre as variáveis `GRAPH_*` (docs/13, seção "Configuração"):
   descobrir na primeira chamada do agente.
 - Desligado, `POST /intake/*` com `fetchAttachments: true` responde `503 MAIL_ATTACHMENTS_DISABLED`;
   o envio de arquivos por multipart continua funcionando.
+- **`GRAPH_MAILBOX` é a caixa que o agente lê pelo conector** (`opusoperacional@opusce.com.br`,
+  compartilhada): o id de mensagem do Graph só existe dentro da caixa de onde foi lido. Trocar a
+  caixa do agente exige trocar esta variável (docs/14).
+- `RATE_LIMIT_API_KEY_FAILURE_*`: só respostas `401` em `/intake/*` contam, por IP. O IP de saída da
+  nuvem da Anthropic é compartilhado entre clientes, por isso o limite é folgado (50 em 5 min):
+  impede lixo em volume sem permitir que um terceiro no mesmo IP bloqueie o agente.
 
 Sobre as variáveis `CNPJ_LOOKUP_*`:
 

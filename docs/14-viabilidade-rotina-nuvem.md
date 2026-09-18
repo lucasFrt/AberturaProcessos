@@ -78,7 +78,7 @@ O que **não** é viável como imaginado: "ler a caixa o dia inteiro a cada 15 m
   idempotência já é o `IntakeEvent`; a marcação visual para humanos fica para o backend (papel
   `Application Mail.ReadWrite` via RBAC) ou é dispensada.
 - Ler caixa compartilhada pelo conector exige Full Access do usuário na caixa:
-  `Add-MailboxPermission -Identity processos@... -User lucas@... -AccessRights FullAccess -AutoMapping $false`.
+  `Add-MailboxPermission -Identity opusoperacional@opusce.com.br -User lucas@opusce.com.br -AccessRights FullAccess -AutoMapping $false` (já vale para o usuário atual do conector).
 
 ### Alternativa: Claude Code headless no próprio Windows Server
 
@@ -129,14 +129,16 @@ inaceitável antes de haver API paga.
 | Certificado TLS de CA pública | curl da sandbox falha com self-signed | win-acme / Let's Encrypt no IIS (docs/11) |
 | `/intake/*` sem limitador antes de `authenticate` | chave inválida ilimitada (DoS barato) | `anonymousLimiter` antes de `authenticate` no router de intake e/ou IP allowlist no IIS |
 | Prompt `agente-email-haiku.md` pressupõe MCP | não serve para a rotina | criado `rotina-intake-claude-max.md` (curl) |
-| `GRAPH_MAILBOX` ≠ caixa lida pelo conector | `MAIL_MESSAGE_NOT_FOUND` em tudo | definir a caixa antes de configurar o Graph |
-| Idempotência só por id do Graph | e-mail movido de pasta = evento novo | aceitar `internetMessageId` como chave secundária (evolução) |
-| `requesterEmail` aceito em `/lookup` e ignorado; retomada de `FAILED` mantém `kind` original | cosmético | limpar na próxima tarefa |
+| `GRAPH_MAILBOX` ≠ caixa lida pelo conector | `MAIL_MESSAGE_NOT_FOUND` em tudo | **Decidido: `opusoperacional@opusce.com.br`** (compartilhada) — env, docs e prompt atualizados |
+| Idempotência só por id do Graph | e-mail movido de pasta = evento novo | **Feito**: `source.internetMessageId` como chave secundária (claim + fallback de busca no Graph) |
+| `/intake/*` sem limitador antes de `authenticate` | chave inválida ilimitada | **Feito**: `apiKeyFailureLimiter` (só 401 contam, por IP, 50/5 min) |
+| `requesterEmail` aceito em `/lookup` e ignorado; retomada de `FAILED` mantém `kind` original | cosmético | **Feito**: campo removido; retomada atualiza `kind` e `externalId` |
 
 ## Próximos passos (ordem recomendada)
 
-1. **Decidir a caixa** que o agente lê (pessoal de quem autorizou o conector vs. compartilhada
-   `processos@`). Se compartilhada: `Add-MailboxPermission` FullAccess para o usuário do conector.
+1. ~~Decidir a caixa~~ **Decidido: `opusoperacional@opusce.com.br`** (compartilhada). O usuário do conector
+   (lucas@) já a lê — a rotina antiga do Cowork usava `mailboxOwnerEmail` nessa caixa com sucesso;
+   se um dia trocar o usuário do conector, conceder `Add-MailboxPermission ... -AccessRights FullAccess`.
 2. **Entra ID + Exchange**: registrar o app, RBAC for Applications com escopo na caixa (seção
    "Configuração" de docs/13), preencher `GRAPH_*` no `.env`, esperar propagação.
 3. **Smoke test do Graph**: com a API em dev, `POST /intake/processes` com `fetchAttachments: true`

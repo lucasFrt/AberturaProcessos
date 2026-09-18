@@ -82,6 +82,9 @@ export const envSchema = z.object({
   RATE_LIMIT_UPLOAD_WINDOW_MINUTES: z.coerce.number().int().positive().default(10),
   RATE_LIMIT_ANONYMOUS_MAX: z.coerce.number().int().positive().default(60),
   RATE_LIMIT_ANONYMOUS_WINDOW_MINUTES: z.coerce.number().int().positive().default(1),
+  /** Falhas de autenticação por chave de API (401) por IP em `/intake` (docs/14). */
+  RATE_LIMIT_API_KEY_FAILURE_MAX: z.coerce.number().int().positive().default(50),
+  RATE_LIMIT_API_KEY_FAILURE_WINDOW_MINUTES: z.coerce.number().int().positive().default(5),
 
   // ── Armazenamento de anexos (docs/10, RF-40 a RF-44, RNF-11) ──
   // Resolvido para caminho absoluto e criado se não existir por
@@ -125,7 +128,7 @@ export const envSchema = z.object({
   GRAPH_TENANT_ID: z.string().optional(),
   GRAPH_CLIENT_ID: z.string().optional(),
   GRAPH_CLIENT_SECRET: z.string().optional(),
-  /** UPN da caixa lida pelo agente, ex.: processos@opusce.com.br. */
+  /** UPN da caixa lida pelo agente (a mesma que o conector lê), ex.: opusoperacional@opusce.com.br. */
   GRAPH_MAILBOX: z.string().optional(),
   GRAPH_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
 });

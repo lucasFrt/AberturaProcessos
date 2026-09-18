@@ -187,19 +187,20 @@ caixa compartilhada diretamente e terá depreciação anunciada
 Connect-ExchangeOnline
 # ObjectId = "Object ID" do app em Enterprise Applications (não o do App Registration)
 New-ServicePrincipal -AppId <GRAPH_CLIENT_ID> -ObjectId <ObjectId-do-Enterprise-App> -DisplayName "Intake de processos"
-New-ManagementScope -Name "IntakeProcessos" -RecipientRestrictionFilter "PrimarySmtpAddress -eq 'processos@opusce.com.br'"
+New-ManagementScope -Name "IntakeProcessos" -RecipientRestrictionFilter "PrimarySmtpAddress -eq 'opusoperacional@opusce.com.br'"
 New-ManagementRoleAssignment -App <ObjectId-do-Enterprise-App> -Role "Application Mail.Read" -CustomResourceScope "IntakeProcessos"
 # Valida na hora (ignora o cache de 30 min a 2 h da propagação real):
-Test-ServicePrincipalAuthorization -Identity <ObjectId-do-Enterprise-App> -Resource processos@opusce.com.br
+Test-ServicePrincipalAuthorization -Identity <ObjectId-do-Enterprise-App> -Resource opusoperacional@opusce.com.br
 ```
 
 3. `GRAPH_MAILBOX` **tem de ser a mesma caixa que o agente lê pelo conector**: o id de mensagem do
-   Graph é específico da caixa, e o backend busca `/users/{GRAPH_MAILBOX}/messages/{id}`. Se o agente
-   lê uma caixa compartilhada via `mailboxOwnerEmail`, é ela que vai em `GRAPH_MAILBOX`; se lê a caixa
-   pessoal de quem autorizou o conector, é essa. Ids também mudam quando a mensagem é movida de
-   pasta — por isso o agente deve processar na hora e o backend baixa os anexos antes de qualquer
-   escrita. (Evolução prevista: aceitar `internetMessageId` como chave secundária, estável entre
-   pastas e caixas; o conector já o devolve.)
+   Graph é específico da caixa, e o backend busca `/users/{GRAPH_MAILBOX}/messages/{id}`. A caixa
+   definida é a compartilhada **`opusoperacional@opusce.com.br`**, lida pelo conector via `mailboxOwnerEmail`
+   (o usuário que autorizou o conector precisa de Full Access nela — `Add-MailboxPermission`). Ids
+   também mudam quando a mensagem é movida de pasta; por isso o agente envia também o
+   `source.internetMessageId` (Message-ID RFC 5322, que o conector devolve): é a chave secundária de
+   idempotência e o backend o usa para reencontrar a mensagem no Graph quando o id original não
+   responde mais (docs/05, "Intake").
 
 ### O agente
 

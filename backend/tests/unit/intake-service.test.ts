@@ -366,6 +366,7 @@ describe('IntakeService (docs/13)', () => {
       await ctx.intakeEventRepository.claim({
         channel: 'EMAIL',
         externalId: 'msg-1',
+        internetMessageId: null,
         kind: 'PROCESS',
         status: 'PROCESSING',
         subject: null,
@@ -422,6 +423,100 @@ describe('IntakeService (docs/13)', () => {
       ).toHaveLength(1);
       expect(resumed.warnings.some((w) => w.includes('Execução anterior falhou'))).toBe(true);
       expect(lateEvent.status).toBe('COMPLETED');
+    });
+  });
+
+  describe('chave secundária internetMessageId (docs/14)', () => {
+    it('mesma mensagem com id do Graph novo (movida de pasta) é duplicata, não evento novo', async () => {
+      const ctx = await buildContext({ cnpjLookup: false });
+      const first = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({
+          source: {
+            channel: 'EMAIL',
+            externalId: 'id-antigo',
+            internetMessageId: '<abc@mail.example>',
+            receivedAt: RECEIVED_AT,
+          },
+        }),
+      );
+
+      const second = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({
+          source: {
+            channel: 'EMAIL',
+            externalId: 'id-novo-apos-mover',
+            internetMessageId: '<abc@mail.example>',
+            receivedAt: RECEIVED_AT,
+          },
+        }),
+      );
+
+      expect(second.duplicate).toBe(true);
+      expect(second.process.id).toBe(first.process.id);
+      expect(ctx.processRepository.items).toHaveLength(1);
+      expect(ctx.intakeEventRepository.items).toHaveLength(1);
+      expect(first.event.internetMessageId).toBe('<abc@mail.example>');
+    });
+
+    it('retomada de FAILED por internetMessageId atualiza o externalId e o kind do evento', async () => {
+      const ctx = await buildContext({ cnpjLookup: false });
+      // Primeira tentativa: ATTACHMENT com referência inexistente → FAILED.
+      await expect(
+        ctx.service.attachToProcess(
+          ACTOR,
+          attachInput({
+            source: {
+              channel: 'EMAIL',
+              externalId: 'id-antigo',
+              internetMessageId: '<xyz@mail.example>',
+              receivedAt: RECEIVED_AT,
+            },
+            processRef: 'NAO-EXISTE',
+            note: 'x',
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'PROCESS_REF_NOT_FOUND' });
+
+      // Agente reclassifica como NOVO PROCESSO; a mensagem foi movida (id novo).
+      const created = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({
+          source: {
+            channel: 'EMAIL',
+            externalId: 'id-novo',
+            internetMessageId: '<xyz@mail.example>',
+            receivedAt: RECEIVED_AT,
+          },
+        }),
+      );
+
+      expect(created.duplicate).toBe(false);
+      expect(ctx.intakeEventRepository.items).toHaveLength(1);
+      const event = ctx.intakeEventRepository.items[0];
+      expect(event?.externalId).toBe('id-novo');
+      expect(event?.kind).toBe('PROCESS');
+      expect(event?.status).toBe('COMPLETED');
+    });
+
+    it('repassa internetMessageId ao provedor de anexos para o fallback', async () => {
+      const ctx = await buildContext({ cnpjLookup: false });
+
+      await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({
+          source: {
+            channel: 'EMAIL',
+            externalId: 'msg-1',
+            internetMessageId: '<k@mail.example>',
+            receivedAt: RECEIVED_AT,
+          },
+          fetchAttachments: true,
+        }),
+      );
+
+      expect(ctx.mailAttachmentProvider.optionsSeen[0]?.internetMessageId).toBe('<k@mail.example>');
     });
   });
 

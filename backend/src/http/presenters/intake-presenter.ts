@@ -10,6 +10,7 @@ interface IntakeEventDto {
   id: string;
   channel: string;
   externalId: string;
+  internetMessageId: string | null;
   kind: string;
   status: string;
   subject: string | null;
@@ -33,6 +34,7 @@ export function presentIntakeEvent(event: IntakeEvent): IntakeEventDto {
     id: event.id,
     channel: event.channel,
     externalId: event.externalId,
+    internetMessageId: event.internetMessageId,
     kind: event.kind,
     status: event.status,
     subject: event.subject,

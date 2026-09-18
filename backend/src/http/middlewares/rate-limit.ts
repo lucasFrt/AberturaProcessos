@@ -69,7 +69,23 @@ export interface RateLimitersConfig {
   uploadWindowMs: number;
   anonymousMaxRequests: number;
   anonymousWindowMs: number;
+  /**
+   * Falhas de autenticação (401) por IP nas rotas de intake, que ficam
+   * expostas à internet só com `X-Api-Key` (docs/14). Opcionais para não
+   * obrigar cada teste a informá-los; os padrões valem para produção.
+   *
+   * Limite deliberadamente folgado e janela curta: o IP de saída da nuvem da
+   * Anthropic é compartilhado entre clientes, então um limite apertado
+   * permitiria a um terceiro no mesmo IP bloquear o agente legítimo por
+   * alguns minutos. Adivinhar a chave (256 bits) é inviável de qualquer
+   * forma; o que se corta aqui é o desperdício de CPU/banco com lixo.
+   */
+  apiKeyFailureMaxRequests?: number | undefined;
+  apiKeyFailureWindowMs?: number | undefined;
 }
+
+const API_KEY_FAILURE_DEFAULT_MAX = 50;
+const API_KEY_FAILURE_DEFAULT_WINDOW_MS = 5 * MINUTES_TO_MS;
 
 export interface RateLimiters {
   authLimiter: RequestHandler;
@@ -79,6 +95,13 @@ export interface RateLimiters {
   internalLimiter: RequestHandler;
   uploadLimiter: RequestHandler;
   anonymousLimiter: RequestHandler;
+  /**
+   * Conta só respostas 401 (chave inválida/revogada) por IP. Vai ANTES de
+   * `authenticate` no router de intake: uma chave válida não é limitada por
+   * ele (as respostas 2xx/4xx de negócio não contam), mas tentativa de
+   * adivinhar chave ou martelar com chave revogada é cortada.
+   */
+  apiKeyFailureLimiter: RequestHandler;
   rateLimitByRole: RequestHandler;
 }
 
@@ -151,6 +174,19 @@ export function buildRateLimiters(config: RateLimitersConfig): RateLimiters {
     handler: rateLimitExceededHandler,
   });
 
+  const apiKeyFailureLimiter: RequestHandler = rateLimit({
+    windowMs: config.apiKeyFailureWindowMs ?? API_KEY_FAILURE_DEFAULT_WINDOW_MS,
+    limit: config.apiKeyFailureMaxRequests ?? API_KEY_FAILURE_DEFAULT_MAX,
+    standardHeaders: true,
+    legacyHeaders: false,
+    // `skipSuccessfulRequests` + `requestWasSuccessful` = só o que responde
+    // 401 entra na contagem; o hit é decrementado quando a resposta termina
+    // com outro status.
+    skipSuccessfulRequests: true,
+    requestWasSuccessful: (_req, res) => res.statusCode !== 401,
+    handler: rateLimitExceededHandler,
+  });
+
   /**
    * Dispatcher usado nas rotas autenticadas de negócio (docs/06): decide
    * qual limitador aplicar de acordo com o papel resolvido por
@@ -177,6 +213,7 @@ export function buildRateLimiters(config: RateLimitersConfig): RateLimiters {
     internalLimiter,
     uploadLimiter,
     anonymousLimiter,
+    apiKeyFailureLimiter,
     rateLimitByRole,
   };
 }
@@ -198,6 +235,8 @@ export function rateLimitersConfigFromEnv(): RateLimitersConfig {
     uploadWindowMs: env.RATE_LIMIT_UPLOAD_WINDOW_MINUTES * MINUTES_TO_MS,
     anonymousMaxRequests: env.RATE_LIMIT_ANONYMOUS_MAX,
     anonymousWindowMs: env.RATE_LIMIT_ANONYMOUS_WINDOW_MINUTES * MINUTES_TO_MS,
+    apiKeyFailureMaxRequests: env.RATE_LIMIT_API_KEY_FAILURE_MAX,
+    apiKeyFailureWindowMs: env.RATE_LIMIT_API_KEY_FAILURE_WINDOW_MINUTES * MINUTES_TO_MS,
   };
 }
 

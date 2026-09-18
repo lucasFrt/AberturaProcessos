@@ -278,6 +278,42 @@ describe('Intake por e-mail — integração (docs/13)', () => {
       expect((response.body as ErrorBody).error.code).toBe('VALIDATION_ERROR');
     });
 
+    it('internetMessageId: id do Graph novo para a mesma mensagem responde duplicate (docs/14)', async () => {
+      const withMessageId = (externalId: string): Record<string, unknown> => ({
+        ...basePayload(externalId),
+        source: {
+          channel: 'EMAIL',
+          externalId,
+          internetMessageId: '<msg-006@mail.example>',
+          receivedAt: '2026-09-18T10:32:00.000Z',
+        },
+      });
+      const first = await request(app)
+        .post(`${INTAKE_BASE}/processes`)
+        .set('X-Api-Key', apiKey)
+        .send(withMessageId('id-antes-de-mover'));
+      expect(first.status).toBe(201);
+
+      const second = await request(app)
+        .post(`${INTAKE_BASE}/processes`)
+        .set('X-Api-Key', apiKey)
+        .send(withMessageId('id-depois-de-mover'));
+
+      expect(second.status).toBe(200);
+      expect((second.body as IntakeResultBody).duplicate).toBe(true);
+      expect(await prisma.process.count()).toBe(1);
+
+      const events = await request(app)
+        .get(`${INTAKE_BASE}/events`)
+        .set('X-Api-Key', apiKey)
+        .query({ internetMessageId: '<msg-006@mail.example>' });
+      const list = events.body as {
+        data: Array<{ externalId: string; internetMessageId: string }>;
+      };
+      expect(list.data).toHaveLength(1);
+      expect(list.data[0]?.internetMessageId).toBe('<msg-006@mail.example>');
+    });
+
     it('CPF válido é aceito como documento da empresa', async () => {
       const response = await request(app)
         .post(`${INTAKE_BASE}/processes`)
@@ -493,6 +529,53 @@ describe('Intake por e-mail — integração (docs/13)', () => {
     it('sem credencial responde 401', async () => {
       const response = await request(app).post(`${INTAKE_BASE}/processes`).send(basePayload('x'));
       expect(response.status).toBe(401);
+    });
+
+    it('chave inválida repetida estoura o limitador de falhas (429), sem afetar a chave válida', async () => {
+      const limited = buildTestApp(
+        prisma,
+        buildRateLimiters({
+          authMaxRequests: 1000,
+          authWindowMs: 60_000,
+          refreshMaxRequests: 1000,
+          refreshWindowMs: 60_000,
+          oauthCallbackMaxRequests: 1000,
+          oauthCallbackWindowMs: 60_000,
+          clientMaxRequests: 1000,
+          clientWindowMs: 60_000,
+          internalMaxRequests: 1000,
+          internalWindowMs: 60_000,
+          uploadMaxRequests: 1000,
+          uploadWindowMs: 60_000,
+          anonymousMaxRequests: 1000,
+          anonymousWindowMs: 60_000,
+          apiKeyFailureMaxRequests: 3,
+          apiKeyFailureWindowMs: 60_000,
+        }),
+      );
+
+      // Requisições com a chave válida não entram na contagem...
+      for (let i = 0; i < 3; i += 1) {
+        const ok = await request(limited).get(`${INTAKE_BASE}/events`).set('X-Api-Key', apiKey);
+        expect(ok.status).toBe(200);
+      }
+
+      // ...só as 401: a quarta falha do mesmo IP é cortada.
+      const statuses: number[] = [];
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const response = await request(limited)
+          .get(`${INTAKE_BASE}/events`)
+          .set('X-Api-Key', 'apk_invalida');
+        statuses.push(response.status);
+      }
+      expect(statuses).toEqual([401, 401, 401, 429]);
+
+      // Outro IP (trust proxy = 1 honra X-Forwarded-For) não é afetado.
+      const otherIp = await request(limited)
+        .get(`${INTAKE_BASE}/events`)
+        .set('X-Forwarded-For', '203.0.113.5')
+        .set('X-Api-Key', apiKey);
+      expect(otherIp.status).toBe(200);
     });
   });
 });

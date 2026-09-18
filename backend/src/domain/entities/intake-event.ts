@@ -10,6 +10,11 @@ export interface IntakeEvent {
   id: string;
   channel: IntakeChannel;
   externalId: string;
+  /**
+   * Message-ID RFC 5322 (chave secundária de idempotência, docs/14): o id
+   * do Graph muda quando a mensagem é movida de pasta; este não.
+   */
+  internetMessageId: string | null;
   kind: IntakeEventKind;
   status: IntakeEventStatus;
   subject: string | null;
@@ -36,6 +41,7 @@ export interface IntakeEventResult {
 export interface CreateIntakeEventData {
   channel: IntakeChannel;
   externalId: string;
+  internetMessageId: string | null;
   kind: IntakeEventKind;
   status: IntakeEventStatus;
   subject: string | null;
@@ -46,6 +52,10 @@ export interface CreateIntakeEventData {
 }
 
 export interface UpdateIntakeEventData {
+  /** Retomada de evento FAILED encontrado por `internetMessageId`: o id do Graph pode ter mudado. */
+  externalId?: string | undefined;
+  /** Retomada pode mudar a ação (ex.: 404 em ATTACHMENT → tratar como PROCESS). */
+  kind?: IntakeEventKind | undefined;
   status?: IntakeEventStatus | undefined;
   processId?: string | null | undefined;
   result?: IntakeEventResult | null | undefined;
@@ -54,6 +64,7 @@ export interface UpdateIntakeEventData {
 
 export interface IntakeEventFilters {
   externalId?: string | undefined;
+  internetMessageId?: string | undefined;
   status?: IntakeEventStatus | undefined;
   processId?: string | undefined;
 }

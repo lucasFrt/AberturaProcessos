@@ -139,6 +139,49 @@ describe('GraphMailAttachmentProvider', () => {
     expect((await downloadFails.listAttachments('msg-1')).kind).toBe('UNAVAILABLE');
   });
 
+  it('404 pelo id com internetMessageId informado: resolve por $filter e tenta de novo (docs/14)', async () => {
+    const MESSAGES_URL = 'https://graph.test/v1.0/users/processos%40opusce.com.br/messages';
+    const NEW_ATTACHMENTS_URL = `${MESSAGES_URL}/id-novo/attachments`;
+    const { provider, calls } = buildProvider({
+      [TOKEN_URL]: () => jsonResponse({ access_token: 'tok', expires_in: 3600 }),
+      [`${ATTACHMENTS_URL}?`]: () => new Response('', { status: 404 }),
+      [`${MESSAGES_URL}?$filter=`]: () => jsonResponse({ value: [{ id: 'id-novo' }] }),
+      [`${NEW_ATTACHMENTS_URL}/att-1/$value`]: () => new Response(Buffer.from('novo')),
+      [`${NEW_ATTACHMENTS_URL}?`]: () =>
+        jsonResponse({
+          value: [
+            { '@odata.type': '#microsoft.graph.fileAttachment', id: 'att-1', name: 'bl.pdf' },
+          ],
+        }),
+    });
+
+    const outcome = await provider.listAttachments('msg-1', {
+      internetMessageId: "<a'b@mail.example>",
+    });
+
+    expect(outcome.kind).toBe('OK');
+    if (outcome.kind !== 'OK') return;
+    expect(outcome.messageId).toBe('id-novo');
+    expect(outcome.attachments[0]?.content.toString()).toBe('novo');
+    // Aspas simples do Message-ID escapadas em dobro no literal OData.
+    const filterCall = calls.find((url) => url.includes('$filter='));
+    expect(filterCall).toContain(encodeURIComponent("internetMessageId eq '<a''b@mail.example>'"));
+  });
+
+  it('404 pelo id sem internetMessageId (ou sem resultado no $filter) continua MESSAGE_NOT_FOUND', async () => {
+    const MESSAGES_URL = 'https://graph.test/v1.0/users/processos%40opusce.com.br/messages';
+    const { provider } = buildProvider({
+      [TOKEN_URL]: () => jsonResponse({ access_token: 'tok', expires_in: 3600 }),
+      [`${ATTACHMENTS_URL}?`]: () => new Response('', { status: 404 }),
+      [`${MESSAGES_URL}?$filter=`]: () => jsonResponse({ value: [] }),
+    });
+
+    expect(await provider.listAttachments('msg-1')).toEqual({ kind: 'MESSAGE_NOT_FOUND' });
+    expect(
+      await provider.listAttachments('msg-1', { internetMessageId: '<nada@mail.example>' }),
+    ).toEqual({ kind: 'MESSAGE_NOT_FOUND' });
+  });
+
   it('anexo sem contentType recebe application/octet-stream', async () => {
     const { provider } = buildProvider({
       [TOKEN_URL]: () => jsonResponse({ access_token: 'tok', expires_in: 3600 }),

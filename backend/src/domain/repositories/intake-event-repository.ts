@@ -17,10 +17,19 @@ export type ClaimOutcome =
   { created: true; event: IntakeEvent } | { created: false; existing: IntakeEvent };
 
 export interface IntakeEventRepository {
-  /** Insere ou, se `(channel, externalId)` já existe, devolve o existente. */
+  /**
+   * Insere ou devolve o existente. A chave primária é `(channel, externalId)`
+   * (único no banco); `internetMessageId`, quando informado, é checado
+   * antes como chave secundária — mesma mensagem com id do Graph novo
+   * (movida de pasta) não vira evento novo (docs/14).
+   */
   claim(data: CreateIntakeEventData): Promise<ClaimOutcome>;
   findById(id: string): Promise<IntakeEvent | null>;
   findByExternalId(channel: IntakeChannel, externalId: string): Promise<IntakeEvent | null>;
+  findByInternetMessageId(
+    channel: IntakeChannel,
+    internetMessageId: string,
+  ): Promise<IntakeEvent | null>;
   update(id: string, data: UpdateIntakeEventData): Promise<IntakeEvent>;
   /** Mais recentes primeiro. Intake é interno (OPERATIONAL/ADMIN), então não recebe `AccessScope`. */
   list(filters: IntakeEventFilters, pagination: PaginationParams): Promise<Page<IntakeEvent>>;
