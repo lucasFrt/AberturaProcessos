@@ -60,7 +60,11 @@ const DETAIL_INCLUDE = {
 
 type DetailRow = Prisma.ProcessGetPayload<{ include: typeof DETAIL_INCLUDE }>;
 
-function companySummary(company: { id: string; cnpj: string; legalName: string }): CompanySummary {
+function companySummary(company: {
+  id: string;
+  cnpj: string | null;
+  legalName: string;
+}): CompanySummary {
   return { id: company.id, cnpj: company.cnpj, legalName: company.legalName };
 }
 

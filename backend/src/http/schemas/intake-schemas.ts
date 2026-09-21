@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { INTAKE_CHANNELS, INTAKE_EVENT_STATUSES } from '@/domain/enums';
+import { INTAKE_CHANNELS, INTAKE_EVENT_KINDS, INTAKE_EVENT_STATUSES } from '@/domain/enums';
 import { paginationQuerySchema } from '@/http/schemas/pagination-schemas';
 
 /**
@@ -29,10 +29,16 @@ const companyRefSchema = z.object({
   name: z.string().trim().max(255).nullable().optional(),
 });
 
+/** Cliente sem documento no e-mail é resolvido pelo domínio do solicitante (docs/13, decisão 5). */
+const clientCompanyRefSchema = z.object({
+  document: z.string().trim().min(11, 'CNPJ/CPF inválido.').max(20).nullable().optional(),
+  name: z.string().trim().max(255).nullable().optional(),
+});
+
 export const intakeCreateProcessSchema = z.object({
   source: sourceSchema,
   requester: requesterSchema,
-  company: companyRefSchema,
+  company: clientCompanyRefSchema.nullable().default({}),
   requestingCompany: companyRefSchema.nullable().optional(),
   reference: z.string().trim().min(3, 'Referência precisa ter ao menos 3 caracteres.').max(255),
   additionalInfo: z.string().max(10_000).nullable().optional(),
@@ -67,9 +73,24 @@ export const intakeLookupQuerySchema = z
   });
 export type IntakeLookupQuery = z.infer<typeof intakeLookupQuerySchema>;
 
+/** Descarte/escalada registrados para o cursor avançar (docs/13, decisão 9). */
+export const intakeSkipSchema = z.object({
+  source: sourceSchema,
+  requester: requesterSchema.nullable().optional(),
+  outcome: z.enum(['IGNORED', 'ESCALATED']),
+  reason: z.string().trim().min(3, 'Informe o motivo.').max(1000),
+});
+export type IntakeSkipBody = z.infer<typeof intakeSkipSchema>;
+
+export const intakeCursorQuerySchema = z.object({
+  channel: z.enum(INTAKE_CHANNELS).default('EMAIL'),
+});
+export type IntakeCursorQuery = z.infer<typeof intakeCursorQuerySchema>;
+
 export const intakeListEventsQuerySchema = paginationQuerySchema.extend({
   externalId: z.string().trim().min(1).max(400).optional(),
   internetMessageId: z.string().trim().min(1).max(400).optional(),
+  kind: z.enum(INTAKE_EVENT_KINDS).optional(),
   status: z.enum(INTAKE_EVENT_STATUSES).optional(),
   processId: z.string().trim().min(1).optional(),
 });

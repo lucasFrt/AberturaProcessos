@@ -310,7 +310,7 @@ export class ProcessService {
           processCode: detail.code,
           reference: detail.reference,
           clientCompanyName: detail.clientCompany.legalName,
-          clientCompanyCnpj: detail.clientCompany.cnpj,
+          clientCompanyCnpj: detail.clientCompany.cnpj ?? 'cadastro pendente',
           fromStageName,
           toStageName: detail.currentStage.name,
           actorName: actor?.name ?? 'Usuário desconhecido',

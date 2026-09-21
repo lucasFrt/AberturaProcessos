@@ -3,16 +3,20 @@ import type { NextFunction, Request, Response } from 'express';
 import { UnauthenticatedError } from '@/domain/errors/app-error';
 import { filesFromRequest } from '@/http/controllers/document-controller';
 import {
+  presentIntakeCursor,
   presentIntakeEvent,
   presentIntakeResult,
   presentProcessMatch,
+  presentSkipIntakeResult,
 } from '@/http/presenters/intake-presenter';
 import { presentCollection } from '@/http/presenters/pagination-presenter';
 import type {
   IntakeAttachBody,
   IntakeCreateProcessBody,
+  IntakeCursorQuery,
   IntakeListEventsQuery,
   IntakeLookupQuery,
+  IntakeSkipBody,
 } from '@/http/schemas/intake-schemas';
 import type { IntakeService } from '@/services/intake-service';
 
@@ -42,7 +46,7 @@ export class IntakeController {
       const result = await this.service.createProcessFromEmail(req.auth.userId, {
         source: body.source,
         requester: body.requester,
-        company: body.company,
+        company: body.company ?? {},
         requestingCompany: body.requestingCompany,
         reference: body.reference,
         additionalInfo: body.additionalInfo,
@@ -81,6 +85,40 @@ export class IntakeController {
     }
   }
 
+  skip = (req: Request, res: Response, next: NextFunction): void => {
+    void this.handleSkip(req, res, next);
+  };
+
+  private async handleSkip(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.auth) throw new UnauthenticatedError();
+      const body = req.body as IntakeSkipBody;
+      const result = await this.service.skipEmail(req.auth.userId, {
+        source: body.source,
+        requester: body.requester,
+        outcome: body.outcome,
+        reason: body.reason,
+      });
+      res.status(result.duplicate ? 200 : 201).json(presentSkipIntakeResult(result));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  cursor = (req: Request, res: Response, next: NextFunction): void => {
+    void this.handleCursor(req, res, next);
+  };
+
+  private async handleCursor(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const query = req.query as unknown as IntakeCursorQuery;
+      const cursor = await this.service.getCursor(query.channel);
+      res.status(200).json(presentIntakeCursor(cursor));
+    } catch (error) {
+      next(error);
+    }
+  }
+
   lookup = (req: Request, res: Response, next: NextFunction): void => {
     void this.handleLookup(req, res, next);
   };
@@ -110,6 +148,7 @@ export class IntakeController {
         {
           externalId: query.externalId,
           internetMessageId: query.internetMessageId,
+          kind: query.kind,
           status: query.status,
           processId: query.processId,
         },

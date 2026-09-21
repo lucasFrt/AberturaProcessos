@@ -4,7 +4,7 @@ import type { ReactElement } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import type { ProcessListItemDto } from '@/features/processes/api/process-api';
-import { maskDocument } from '@/shared/lib/cnpj';
+import { formatCompanyDocument } from '@/shared/lib/cnpj';
 import { formatRelativeTime } from '@/shared/lib/format';
 
 /**
@@ -65,7 +65,7 @@ export function ProcessCard({ process }: ProcessCardProps): ReactElement {
         </Typography.Paragraph>
 
         <Flex gap={4} wrap>
-          <Tag>{maskDocument(process.clientCompany.cnpj)}</Tag>
+          <Tag>{formatCompanyDocument(process.clientCompany.cnpj)}</Tag>
           {process.source === 'EMAIL' && (
             <Tooltip
               title={

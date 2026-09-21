@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { useAuthStore } from '@/features/auth/store/auth-store';
 import { searchCompanies } from '@/features/companies/api/company-api';
 import { useDebounce } from '@/shared/hooks/useDebounce';
+import { formatCompanyDocument } from '@/shared/lib/cnpj';
 import type { CompanySummary } from '@/shared/types';
 
 /**
@@ -84,7 +85,7 @@ function CompanySelect({
       : (remoteCompanies ?? []);
     return companies.map((company) => ({
       value: company.id,
-      label: `${company.legalName} — ${company.cnpj}`,
+      label: `${company.legalName} — ${formatCompanyDocument(company.cnpj)}`,
     }));
   }, [isClient, user?.companies, remoteCompanies]);
 

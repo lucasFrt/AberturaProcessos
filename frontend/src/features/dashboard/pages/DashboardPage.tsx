@@ -35,7 +35,7 @@ import type { DashboardAverageTimePerStageDto } from '@/features/dashboard/api/d
 import { useDashboardMetrics } from '@/features/dashboard/hooks/useDashboardMetrics';
 import { EmptyState } from '@/shared/components/EmptyState';
 import { PageHeader } from '@/shared/components/PageHeader';
-import { maskCnpj } from '@/shared/lib/cnpj';
+import { formatCompanyDocument } from '@/shared/lib/cnpj';
 import { formatDateOnly, formatDurationHours } from '@/shared/lib/format';
 
 const { RangePicker } = DatePicker;
@@ -130,7 +130,7 @@ export function DashboardPage(): ReactElement {
         .slice(0, 10)
         .map((company) => ({
           ...company,
-          label: `${company.legalName} (${maskCnpj(company.cnpj)})`,
+          label: `${company.legalName} (${formatCompanyDocument(company.cnpj)})`,
         })),
     [data?.byCompany],
   );

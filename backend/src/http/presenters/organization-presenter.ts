@@ -46,7 +46,7 @@ export function presentEmailDomain(domain: EmailDomain): EmailDomainDto {
 
 interface CompanySummaryDto {
   id: string;
-  cnpj: string;
+  cnpj: string | null;
   legalName: string;
   tradeName: string | null;
   isActive: boolean;

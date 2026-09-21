@@ -96,6 +96,10 @@ function hintFor(code: string): string {
       return 'Nenhum processo com esse código/referência. Se details.candidates tiver um que claramente corresponde, use o id dele; senão trate o e-mail como novo processo ou escale para o operacional.';
     case 'COMPANY_INACTIVE':
       return 'A empresa está desativada no sistema por decisão humana. Não tente contornar: escale para o operacional.';
+    case 'COMPANY_AMBIGUOUS':
+      return 'O domínio do remetente tem mais de uma empresa. Escolha em details.candidates pela razão social/nome fantasia da assinatura e chame de novo com companyDocument = o cnpj dela; sem certeza, escale.';
+    case 'COMPANY_REQUIRED':
+      return 'Remetente de webmail sem CNPJ no e-mail: não dá para identificar a empresa. Escale (skip_email com ESCALATED).';
     case 'INTAKE_IN_PROGRESS':
       return 'Outra execução está processando esta mensagem. Não repita agora; siga para o próximo e-mail.';
     case 'MAIL_ATTACHMENTS_DISABLED':
@@ -183,14 +187,15 @@ export function registerTools(server: McpServer, api: ApiClient): void {
         companyDocument: z
           .string()
           .min(11)
+          .optional()
           .describe(
-            'CNPJ (14 dígitos) ou CPF (11) da empresa/pessoa para quem o processo é aberto. Com ou sem máscara.',
+            'CNPJ (14 dígitos) ou CPF (11) da empresa/pessoa para quem o processo é aberto, com ou sem máscara. OMITA se o e-mail não trouxer: o servidor identifica a empresa pelo domínio do remetente e, se ela ainda não existir, cria em "cadastro pendente" (sem CNPJ) para o processo abrir mesmo assim.',
           ),
         companyName: z
           .string()
           .optional()
           .describe(
-            'Razão social ou nome, como aparece no e-mail. Usado se a Receita não responder ou se for CPF.',
+            'Razão social ou nome da empresa, como aparece no e-mail ou na assinatura. Usado se a Receita não responder, se for CPF, e como nome do cadastro pendente quando não há CNPJ.',
           ),
         requestingCompanyDocument: z
           .string()
@@ -224,7 +229,7 @@ export function registerTools(server: McpServer, api: ApiClient): void {
           receivedAt: toIso(input.receivedAt),
         },
         requester: { email: input.requesterEmail, name: input.requesterName ?? null },
-        company: { document: input.companyDocument, name: input.companyName ?? null },
+        company: { document: input.companyDocument ?? null, name: input.companyName ?? null },
         requestingCompany: input.requestingCompanyDocument
           ? { document: input.requestingCompanyDocument, name: input.requestingCompanyName ?? null }
           : null,
@@ -293,6 +298,63 @@ export function registerTools(server: McpServer, api: ApiClient): void {
           ? await api.postMultipart('/intake/attachments', payload, files)
           : await api.postJson('/intake/attachments', payload);
       return toToolResult(result);
+    },
+  );
+
+  server.registerTool(
+    'get_intake_cursor',
+    {
+      title: 'De onde continuar a leitura da pasta de intake',
+      description:
+        'Devolve o receivedAt mais recente entre os e-mails já concluídos (processados, ignorados ou escalados). Chame no INÍCIO da execução e busque na pasta de intake só o que chegou depois dessa data (com 1 minuto de folga). receivedAt=null significa que nada foi tratado ainda. E-mails com tentativa FAILED não avançam o cursor: são relidos até serem concluídos ou escalados (skip_email).',
+      inputSchema: {},
+    },
+    async () => toToolResult(await api.get('/intake/cursor', { channel: 'EMAIL' })),
+  );
+
+  server.registerTool(
+    'skip_email',
+    {
+      title: 'Registrar e-mail ignorado ou escalado',
+      description:
+        'Registra que o e-mail NÃO vira processo: IGNORED (ruído: notificação automática, newsletter, interno sem pedido) ou ESCALATED (precisa de uma pessoa: sem CNPJ/CPF, sem referência, pedido que não é abrir/complementar, dúvida na classificação, ou tentativa que falhou de novo). Obrigatório para cada e-mail examinado que não foi processado — sem isso o cursor não avança e o e-mail seria relido na próxima execução. Idempotente: se a mensagem já tem desfecho, devolve duplicate=true sem alterar nada.',
+      inputSchema: {
+        externalId: externalIdField,
+        internetMessageId: internetMessageIdField,
+        receivedAt: receivedAtField,
+        subject: z.string().optional().describe('Assunto do e-mail.'),
+        requesterEmail: z
+          .string()
+          .email()
+          .optional()
+          .describe('E-mail do remetente, quando fizer sentido guardar.'),
+        requesterName: z.string().optional(),
+        outcome: z
+          .enum(['IGNORED', 'ESCALATED'])
+          .describe('IGNORED = descartado como ruído; ESCALATED = uma pessoa precisa olhar.'),
+        reason: z
+          .string()
+          .min(3)
+          .max(1000)
+          .describe('Motivo curto e concreto (aparece para o operacional).'),
+      },
+    },
+    async (input) => {
+      const payload = {
+        source: {
+          channel: 'EMAIL',
+          externalId: input.externalId,
+          internetMessageId: input.internetMessageId ?? null,
+          subject: input.subject ?? null,
+          receivedAt: toIso(input.receivedAt),
+        },
+        requester: input.requesterEmail
+          ? { email: input.requesterEmail, name: input.requesterName ?? null }
+          : null,
+        outcome: input.outcome,
+        reason: input.reason,
+      };
+      return toToolResult(await api.postJson('/intake/events/skip', payload));
     },
   );
 

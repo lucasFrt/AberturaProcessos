@@ -30,19 +30,24 @@ export class InMemoryCompanyRepository implements CompanyRepository {
   }
 
   async findByCnpj(cnpj: string): Promise<Company | null> {
-    return this.items.find((item) => item.cnpj === cnpj) ?? null;
+    return this.items.find((item) => item.cnpj !== null && item.cnpj === cnpj) ?? null;
   }
 
   async list(filters: CompanyFilters, pagination: PaginationParams): Promise<Page<Company>> {
     const filtered = this.items.filter((item) => {
       if (filters.organizationId && item.organizationId !== filters.organizationId) return false;
       if (filters.isActive !== undefined && item.isActive !== filters.isActive) return false;
+      if (
+        filters.pendingRegistration !== undefined &&
+        (item.cnpj === null) !== filters.pendingRegistration
+      )
+        return false;
       if (filters.q) {
         const q = filters.q.toLowerCase();
         const matches =
           item.legalName.toLowerCase().includes(q) ||
           (item.tradeName?.toLowerCase().includes(q) ?? false) ||
-          item.cnpj.includes(q);
+          (item.cnpj?.includes(q) ?? false);
         if (!matches) return false;
       }
       return true;
@@ -78,6 +83,8 @@ export class InMemoryCompanyRepository implements CompanyRepository {
 
     const updated: Company = {
       ...current,
+      ...(data.cnpj !== undefined ? { cnpj: data.cnpj } : {}),
+      ...(data.documentType !== undefined ? { documentType: data.documentType } : {}),
       ...(data.legalName !== undefined ? { legalName: data.legalName } : {}),
       ...(data.tradeName !== undefined ? { tradeName: data.tradeName } : {}),
       ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),

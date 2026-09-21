@@ -49,8 +49,13 @@ export type RecordSource = (typeof RECORD_SOURCES)[number];
 export const INTAKE_CHANNELS = ['EMAIL'] as const;
 export type IntakeChannel = (typeof INTAKE_CHANNELS)[number];
 
-/** O que o e-mail pediu: abrir processo ou complementar um existente. */
-export const INTAKE_EVENT_KINDS = ['PROCESS', 'ATTACHMENT'] as const;
+/**
+ * O que foi feito com o e-mail: abrir processo, complementar um existente, ou
+ * registrar que foi descartado (IGNORED) / deixado para uma pessoa (ESCALATED).
+ * Os dois últimos existem para o cursor do intake avançar por e-mails que não
+ * viram processo (docs/13, decisão 9).
+ */
+export const INTAKE_EVENT_KINDS = ['PROCESS', 'ATTACHMENT', 'IGNORED', 'ESCALATED'] as const;
 export type IntakeEventKind = (typeof INTAKE_EVENT_KINDS)[number];
 
 /** PROCESSING é o "claim" do evento; FAILED permite retomar (docs/13, decisão 4). */

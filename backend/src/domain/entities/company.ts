@@ -2,9 +2,13 @@ import type { CompanyDocumentType } from '@/domain/enums';
 
 export interface Company {
   id: string;
-  /** Somente dígitos: 14 (CNPJ) ou 11 (CPF) — ver `documentType`. */
-  cnpj: string;
-  documentType: CompanyDocumentType;
+  /**
+   * Somente dígitos: 14 (CNPJ) ou 11 (CPF) — ver `documentType`. `null` =
+   * cadastro pendente: criada pelo intake a partir do domínio do solicitante
+   * (docs/13, decisão 10); completa-se pela tela de empresas.
+   */
+  cnpj: string | null;
+  documentType: CompanyDocumentType | null;
   legalName: string;
   tradeName: string | null;
   organizationId: string;
@@ -21,14 +25,17 @@ export interface Company {
 }
 
 export interface CreateCompanyData {
-  cnpj: string;
-  documentType: CompanyDocumentType;
+  cnpj: string | null;
+  documentType: CompanyDocumentType | null;
   legalName: string;
   tradeName: string | null;
   organizationId: string;
 }
 
 export interface UpdateCompanyData {
+  /** Conclusão de cadastro pendente: o service só permite quando `cnpj` era `null`. */
+  cnpj?: string | undefined;
+  documentType?: CompanyDocumentType | undefined;
   legalName?: string | undefined;
   tradeName?: string | null | undefined;
   isActive?: boolean | undefined;
@@ -39,4 +46,6 @@ export interface CompanyFilters {
   q?: string | undefined;
   organizationId?: string | undefined;
   isActive?: boolean | undefined;
+  /** `true` = só cadastros pendentes (`cnpj IS NULL`); `false` = só completos. */
+  pendingRegistration?: boolean | undefined;
 }

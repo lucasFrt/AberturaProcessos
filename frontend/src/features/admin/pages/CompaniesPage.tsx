@@ -41,15 +41,20 @@ import { translateError } from '@/shared/api/errors';
 import { Can } from '@/shared/components/Can';
 import { PageHeader } from '@/shared/components/PageHeader';
 import { useDebounce } from '@/shared/hooks/useDebounce';
-import { isValidCnpj, isValidDocument, maskDocument, normalizeCnpjDigits } from '@/shared/lib/cnpj';
+import {
+  isValidCnpj,
+  isValidDocument,
+  maskDocument,
+  normalizeCnpjDigits,
+  PENDING_REGISTRATION_LABEL,
+} from '@/shared/lib/cnpj';
 
 // --- Schema ---
 
+// `cnpj` vazio só é aceito ao editar cadastro pendente sem completá-lo; na
+// criação `onSubmit` exige o campo (o schema não sabe em que modo o modal está).
 const companySchema = z.object({
-  cnpj: z
-    .string()
-    .min(1, 'CNPJ/CPF é obrigatório.')
-    .refine((v) => isValidDocument(v), 'CNPJ ou CPF inválido.'),
+  cnpj: z.string().refine((v) => v === '' || isValidDocument(v), 'CNPJ ou CPF inválido.'),
   legalName: z.string().trim().min(1, 'Razão social é obrigatória.'),
   tradeName: z.string().trim().optional(),
   organizationId: z.string().min(1, 'Organização é obrigatória.'),
@@ -160,6 +165,7 @@ export function CompaniesPage(): ReactElement {
     handleSubmit,
     reset,
     setValue,
+    setError,
     formState: { errors },
   } = useForm<CompanyFormValues>({
     resolver: zodResolver(companySchema),
@@ -220,12 +226,15 @@ export function CompaniesPage(): ReactElement {
   });
 
   const cnpjValue = useWatch({ control, name: 'cnpj' });
+  // Cadastro pendente (docs/13, decisão 10): o CNPJ ainda não existe e pode
+  // ser definido na edição — único caso em que o campo fica editável ali.
+  const documentEditable = editingCompany === null || editingCompany.cnpj === null;
 
   // Dispara sozinho quando o CNPJ fica completo e válido: é o que evita
-  // digitar razão social e nome fantasia à mão. Na edição o campo é somente
-  // leitura, então não há o que consultar.
+  // digitar razão social e nome fantasia à mão. Na edição de cadastro
+  // completo o campo é somente leitura, então não há o que consultar.
   useEffect(() => {
-    if (!modalOpen || editingCompany) return;
+    if (!modalOpen || !documentEditable) return;
 
     const digits = normalizeCnpjDigits(cnpjValue ?? '');
     if (digits.length !== 14 || !isValidCnpj(digits)) {
@@ -236,7 +245,7 @@ export function CompaniesPage(): ReactElement {
 
     lastLookedUpRef.current = digits;
     runCnpjLookup(digits);
-  }, [cnpjValue, modalOpen, editingCompany, runCnpjLookup]);
+  }, [cnpjValue, modalOpen, documentEditable, runCnpjLookup]);
 
   /**
    * Retentativa manual. Necessária porque o efeito acima só dispara na
@@ -266,7 +275,7 @@ export function CompaniesPage(): ReactElement {
     setEditingCompany(company);
     reset({
       // A API devolve só dígitos; o formulário exibe com máscara.
-      cnpj: maskDocument(company.cnpj),
+      cnpj: company.cnpj ? maskDocument(company.cnpj) : '',
       legalName: company.legalName,
       tradeName: company.tradeName ?? '',
       organizationId: company.organizationId,
@@ -283,9 +292,15 @@ export function CompaniesPage(): ReactElement {
 
   function onSubmit(values: CompanyFormValues): void {
     const cleanCnpj = normalizeCnpjDigits(values.cnpj);
+    if (!editingCompany && cleanCnpj.length === 0) {
+      setError('cnpj', { message: 'CNPJ/CPF é obrigatório.' });
+      return;
+    }
     if (editingCompany) {
       updateMutation.mutate({
         id: editingCompany.id,
+        // Só a pendente pode ganhar documento; vazio = continua pendente.
+        ...(editingCompany.cnpj === null && cleanCnpj.length > 0 ? { cnpj: cleanCnpj } : {}),
         legalName: values.legalName,
         tradeName: values.tradeName || undefined,
         organizationId: values.organizationId,
@@ -304,16 +319,21 @@ export function CompaniesPage(): ReactElement {
     {
       title: 'CNPJ/CPF',
       key: 'cnpj',
-      render: (_, record) => (
-        <>
-          {maskDocument(record.cnpj)}
-          {record.documentType === 'CPF' && (
-            <Tag style={{ marginLeft: 8 }} color="purple">
-              CPF
-            </Tag>
-          )}
-        </>
-      ),
+      render: (_, record) =>
+        record.cnpj === null ? (
+          <Tooltip title="Criada pelo intake de e-mail sem CNPJ. Edite para completar o cadastro.">
+            <Tag color="orange">{PENDING_REGISTRATION_LABEL}</Tag>
+          </Tooltip>
+        ) : (
+          <>
+            {maskDocument(record.cnpj)}
+            {record.documentType === 'CPF' && (
+              <Tag style={{ marginLeft: 8 }} color="purple">
+                CPF
+              </Tag>
+            )}
+          </>
+        ),
     },
     { title: 'Razão social', dataIndex: 'legalName', key: 'legalName' },
     {
@@ -423,9 +443,11 @@ export function CompaniesPage(): ReactElement {
             validateStatus={errors.cnpj ? 'error' : ''}
             help={errors.cnpj?.message}
             extra={
-              editingCompany
+              !documentEditable
                 ? undefined
-                : 'CNPJ completo: razão social e nome fantasia são buscados na Receita Federal. CPF (pessoa física): preencha o nome manualmente.'
+                : editingCompany
+                  ? 'Cadastro pendente: informe o CNPJ/CPF para completar. Deixe vazio para manter pendente.'
+                  : 'CNPJ completo: razão social e nome fantasia são buscados na Receita Federal. CPF (pessoa física): preencha o nome manualmente.'
             }
           >
             <Controller
@@ -437,9 +459,9 @@ export function CompaniesPage(): ReactElement {
                   onChange={(event) => field.onChange(maskDocument(event.target.value))}
                   placeholder="00.000.000/0000-00 ou 000.000.000-00"
                   inputMode="numeric"
-                  disabled={editingCompany !== null}
+                  disabled={!documentEditable}
                   suffix={
-                    editingCompany ? null : isLookingUp ? (
+                    !documentEditable ? null : isLookingUp ? (
                       <LoadingOutlined aria-label="Consultando CNPJ na Receita Federal" />
                     ) : (
                       <Tooltip title="Consultar CNPJ na Receita Federal">

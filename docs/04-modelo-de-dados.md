@@ -7,7 +7,7 @@ Estas restrições foram verificadas e moldam o schema. Não são preferências 
 | Limitação | Consequência no schema |
 | --- | --- |
 | O provider `sqlserver` **não suporta `enum`** ([prisma/prisma#6823](https://github.com/prisma/prisma/issues/6823)). | Papéis, status e ações de auditoria são `String` com comprimento fixo. Os valores válidos vivem em uniões de tipo TypeScript + schemas Zod, e são espelhados no banco por `CHECK constraint` adicionada via migration manual. |
-| SQL Server aceita **apenas um `NULL`** por índice `UNIQUE`. | Não existe coluna anulável com `@unique`. IDs de provedores sociais foram movidos para `UserIdentity`, com unicidade composta `(provider, providerUserId)` e ambas as colunas obrigatórias. |
+| SQL Server aceita **apenas um `NULL`** por índice `UNIQUE`. | Não existe coluna anulável com `@unique`. IDs de provedores sociais foram movidos para `UserIdentity`, com unicidade composta `(provider, providerUserId)` e ambas as colunas obrigatórias. A única exceção é `companies.cnpj` (cadastro pendente, docs/13 decisão 10): anulável **sem** `@unique` no schema, com um índice único **filtrado** (`WHERE cnpj IS NOT NULL`) criado em migration manual — o Prisma ignora índices filtrados na introspecção, então não acusa drift; a unicidade é garantida só pelo banco e `findByCnpj` usa `findFirst`. |
 | `String` mapeia por padrão para `NVARCHAR(1000)` (2000 bytes), acima do limite de chave de índice do SQL Server (900/1700 bytes). | **Toda** coluna usada como PK, FK, `@unique` ou dentro de `@@index` recebe `@db.NVarChar(n)` explícito. |
 | SQL Server rejeita **ciclos e múltiplos caminhos de cascade** ([regras especiais](https://www.prisma.io/docs/orm/v6/prisma-schema/data-model/relations/referential-actions/special-rules-for-referential-actions)). O default do Prisma para relação obrigatória é `onUpdate: Cascade`, que também entra nessa checagem. | `onDelete`/`onUpdate` são declarados explicitamente em **todas** as relações. Cascade existe só onde há um único caminho possível (filhos de `User` e de `Process`). O resto é `NoAction`. |
 | Não há tipo `Json` nativo. | Campos de metadados são `NVARCHAR(MAX)` contendo JSON serializado pela aplicação. |
@@ -220,9 +220,10 @@ model EmailDomain {
 model Company {
   id             String   @id @default(cuid()) @db.NVarChar(30)
   /// somente dígitos: 14 (CNPJ) ou 11 (CPF). Nome da coluna é histórico; `documentType` diz o que ela contém.
-  cnpj           String   @unique @db.NVarChar(14)
-  /// CNPJ | CPF
-  documentType   String   @default("CNPJ") @db.NVarChar(10)
+  /// NULL = cadastro pendente (docs/13, decisão 10). Único via índice filtrado em migration manual (ver "Limitações").
+  cnpj           String?  @db.NVarChar(14)
+  /// CNPJ | CPF; NULL enquanto o cadastro está pendente
+  documentType   String?  @db.NVarChar(10)
   legalName      String   @db.NVarChar(255)
   tradeName      String?  @db.NVarChar(255)
   organizationId String   @db.NVarChar(30)

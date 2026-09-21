@@ -2,7 +2,12 @@ import type { IntakeEvent } from '@/domain/entities/intake-event';
 import { calculateProcessPermissions } from '@/domain/entities/process-permissions';
 import type { Role } from '@/domain/enums';
 import { presentProcessDetail, presentProcessListItem } from '@/http/presenters/process-presenter';
-import type { IntakeResult, ProcessMatch } from '@/services/intake-service';
+import type {
+  IntakeCursor,
+  IntakeResult,
+  ProcessMatch,
+  SkipIntakeResult,
+} from '@/services/intake-service';
 
 /** Monta o DTO campo a campo — nunca `...event` (docs/06, checklist de segurança). */
 
@@ -23,6 +28,7 @@ interface IntakeEventDto {
     warnings: string[];
     company: { id: string; created: boolean } | null;
     organization: { id: string; created: boolean; domainRegistered: boolean } | null;
+    reason: string | null;
   } | null;
   errorMessage: string | null;
   createdAt: string;
@@ -56,6 +62,7 @@ export function presentIntakeEvent(event: IntakeEvent): IntakeEventDto {
                 domainRegistered: event.result.organization.domainRegistered,
               }
             : null,
+          reason: event.result.reason,
         }
       : null,
     errorMessage: event.errorMessage,
@@ -103,6 +110,29 @@ export function presentIntakeResult(result: IntakeResult, actorRole: Role): Inta
         }
       : null,
     warnings: [...result.warnings],
+  };
+}
+
+interface SkipIntakeResultDto {
+  duplicate: boolean;
+  event: IntakeEventDto;
+}
+
+export function presentSkipIntakeResult(result: SkipIntakeResult): SkipIntakeResultDto {
+  return { duplicate: result.duplicate, event: presentIntakeEvent(result.event) };
+}
+
+interface IntakeCursorDto {
+  channel: string;
+  receivedAt: string | null;
+  event: IntakeEventDto | null;
+}
+
+export function presentIntakeCursor(cursor: IntakeCursor): IntakeCursorDto {
+  return {
+    channel: cursor.channel,
+    receivedAt: cursor.receivedAt ? cursor.receivedAt.toISOString() : null,
+    event: cursor.event ? presentIntakeEvent(cursor.event) : null,
   };
 }
 

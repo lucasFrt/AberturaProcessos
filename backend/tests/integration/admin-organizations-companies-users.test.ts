@@ -218,6 +218,60 @@ describe('Cadastros de organizações, empresas e usuários (ADMIN) — integra�
     });
   });
 
+  describe('Cadastro pendente (docs/13, decisão 10)', () => {
+    it('PATCH /companies/:id define o CNPJ de uma pendente; recusa trocar o de uma completa', async () => {
+      const pending = await prisma.company.create({
+        data: {
+          cnpj: null,
+          documentType: null,
+          legalName: 'Pendente',
+          organizationId: clientOrganizationId,
+        },
+      });
+
+      const listed = await request(app)
+        .get(COMPANIES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .query({ pendingRegistration: true });
+      expect(listed.status).toBe(200);
+      const rows = (listed.body as { data: Array<{ id: string; cnpj: string | null }> }).data;
+      expect(rows.map((row) => row.id)).toEqual([pending.id]);
+      expect(rows[0]?.cnpj).toBeNull();
+
+      const completed = await request(app)
+        .patch(`${COMPANIES_BASE}/${pending.id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ cnpj: '11.222.333/0001-81', legalName: 'Pendente LTDA' });
+      expect(completed.status).toBe(200);
+      expect(completed.body as object).toMatchObject({
+        cnpj: '11222333000181',
+        documentType: 'CNPJ',
+        legalName: 'Pendente LTDA',
+      });
+
+      const locked = await request(app)
+        .patch(`${COMPANIES_BASE}/${pending.id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ cnpj: '11.444.777/0001-61' });
+      expect(locked.status).toBe(409);
+      expect((locked.body as { error: { code: string } }).error.code).toBe(
+        'COMPANY_DOCUMENT_LOCKED',
+      );
+
+      // O índice único filtrado segue valendo para documentos preenchidos.
+      await expect(
+        prisma.company.create({
+          data: {
+            cnpj: '11222333000181',
+            documentType: 'CNPJ',
+            legalName: 'Dup',
+            organizationId: clientOrganizationId,
+          },
+        }),
+      ).rejects.toThrow();
+    });
+  });
+
   describe('CNPJ inválido', () => {
     it('responde 400 INVALID_CNPJ para dígitos verificadores incorretos', async () => {
       const response = await request(app)

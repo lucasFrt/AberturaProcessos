@@ -62,7 +62,7 @@ interface MeResponseDto {
   avatarUrl: string | null;
   organization: { id: string; name: string; isInternal: boolean } | null;
   accessScope: string;
-  companies: Array<{ id: string; cnpj: string; legalName: string }>;
+  companies: Array<{ id: string; cnpj: string | null; legalName: string }>;
   permissions: readonly string[];
 }
 

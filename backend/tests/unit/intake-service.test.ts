@@ -340,6 +340,147 @@ describe('IntakeService (docs/13)', () => {
     });
   });
 
+  describe('createProcessFromEmail — empresa pelo domínio do solicitante (decisão 5)', () => {
+    it('sem documento, resolve a única empresa ativa da organização do domínio', async () => {
+      const ctx = await buildContext();
+      await seedCompany(ctx, VALID_CNPJ, ctx.clientOrganizationId);
+
+      const result = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({ company: { document: null, name: null } }),
+      );
+
+      expect(result.process.clientCompany.cnpj).toBe(VALID_CNPJ);
+      expect(result.company?.created).toBe(false);
+      expect(result.organization).toEqual({
+        id: ctx.clientOrganizationId,
+        created: false,
+        domainRegistered: false,
+      });
+      expect(result.warnings.some((w) => w.includes('resolvida pelo domínio'))).toBe(true);
+      expect(ctx.cnpjLookupProvider.calls).toHaveLength(0);
+    });
+
+    it('empresa inativa não conta; várias ativas usam o nome da assinatura como desempate', async () => {
+      const ctx = await buildContext();
+      await seedCompany(ctx, VALID_CNPJ, ctx.clientOrganizationId, { isActive: false });
+      const filial = await seedCompany(ctx, OTHER_CNPJ, ctx.clientOrganizationId);
+      await ctx.companyRepository.update(filial.id, { tradeName: 'Filial Duque' });
+      const matriz = await seedCompany(ctx, VALID_CPF, ctx.clientOrganizationId);
+      await ctx.companyRepository.update(matriz.id, { legalName: 'Cliente X Matriz' });
+
+      await expect(
+        ctx.service.createProcessFromEmail(
+          ACTOR,
+          createInput({ company: { document: null, name: null } }),
+        ),
+      ).rejects.toMatchObject({ code: 'COMPANY_AMBIGUOUS', status: 409 });
+
+      const result = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({
+          source: { channel: 'EMAIL', externalId: 'msg-dq', receivedAt: RECEIVED_AT },
+          company: { document: null, name: 'filial duque' },
+        }),
+      );
+      expect(result.process.clientCompany.cnpj).toBe(OTHER_CNPJ);
+    });
+
+    it('webmail público sem documento responde 400 COMPANY_REQUIRED e marca o evento FAILED', async () => {
+      const ctx = await buildContext();
+      await expect(
+        ctx.service.createProcessFromEmail(
+          ACTOR,
+          createInput({ requester: { email: 'alguem@gmail.com' }, company: { document: null } }),
+        ),
+      ).rejects.toMatchObject({ code: 'COMPANY_REQUIRED', status: 400 });
+      expect(ctx.processRepository.items).toHaveLength(0);
+      expect(ctx.intakeEventRepository.items[0]?.status).toBe('FAILED');
+    });
+
+    it('domínio corporativo desconhecido cria organização, domínio e empresa em cadastro pendente (decisão 10)', async () => {
+      const ctx = await buildContext();
+
+      const result = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({
+          requester: { email: 'importacao@casaenovidade.com.br', name: 'Gabriel' },
+          company: { document: null, name: 'Casa & Novidade' },
+          reference: '230/26 / BL 0406',
+        }),
+      );
+
+      expect(result.company?.created).toBe(true);
+      expect(result.organization).toMatchObject({ created: true, domainRegistered: true });
+      const company = await ctx.companyRepository.findById(result.company?.id ?? '');
+      expect(company).toMatchObject({
+        cnpj: null,
+        documentType: null,
+        legalName: 'Casa & Novidade',
+        isActive: true,
+      });
+      expect(result.process.clientCompany.id).toBe(company?.id);
+      expect(
+        (await ctx.emailDomainRepository.findByDomain('casaenovidade.com.br'))?.autoApprove,
+      ).toBe(false);
+      expect(result.warnings.some((w) => w.includes('cadastro pendente'))).toBe(true);
+      expect(ctx.cnpjLookupProvider.calls).toHaveLength(0);
+    });
+
+    it('domínio conhecido sem empresa cria a pendente na organização existente; sem nome usa o domínio', async () => {
+      const ctx = await buildContext();
+
+      const result = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({ company: { document: null } }),
+      );
+
+      const company = await ctx.companyRepository.findById(result.company?.id ?? '');
+      expect(company?.organizationId).toBe(ctx.clientOrganizationId);
+      expect(company?.legalName).toBe('clientex.com.br');
+      expect(result.organization?.created).toBe(false);
+
+      // Segundo e-mail do mesmo domínio reaproveita a pendente em vez de criar outra.
+      const again = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({
+          source: { channel: 'EMAIL', externalId: 'msg-3', receivedAt: RECEIVED_AT },
+          company: { document: null },
+        }),
+      );
+      expect(again.process.clientCompany.id).toBe(company?.id);
+      expect(ctx.companyRepository.items).toHaveLength(1);
+    });
+
+    it('e-mail posterior com CNPJ conclui o cadastro pendente da organização em vez de criar outra empresa', async () => {
+      const ctx = await buildContext();
+      ctx.cnpjLookupProvider.respondFound({ cnpj: VALID_CNPJ, legalName: 'CLIENTE X LTDA' });
+      const first = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({ company: { document: null, name: 'Cliente X' } }),
+      );
+
+      const second = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({
+          source: { channel: 'EMAIL', externalId: 'msg-3', receivedAt: RECEIVED_AT },
+          company: { document: VALID_CNPJ },
+        }),
+      );
+
+      expect(second.company?.id).toBe(first.company?.id);
+      expect(second.company?.created).toBe(false);
+      const company = await ctx.companyRepository.findById(first.company?.id ?? '');
+      expect(company).toMatchObject({
+        cnpj: VALID_CNPJ,
+        documentType: 'CNPJ',
+        legalName: 'CLIENTE X LTDA',
+      });
+      expect(ctx.companyRepository.items).toHaveLength(1);
+      expect(second.warnings.some((w) => w.includes('concluído'))).toBe(true);
+    });
+  });
+
   describe('idempotência por externalId (decisão 4)', () => {
     it('segunda chamada com o mesmo externalId devolve duplicate: true sem criar nada', async () => {
       const ctx = await buildContext({ cnpjLookup: false });
@@ -802,6 +943,183 @@ describe('IntakeService (docs/13)', () => {
       const byCompany = await ctx.service.lookupProcess({ companyDocument: OTHER_CNPJ, limit: 5 });
       expect(byCompany).toHaveLength(1);
       expect(byCompany[0]?.matchedBy).toBe('PARTIAL');
+    });
+  });
+
+  describe('skipEmail e getCursor — pasta de intake sem mover e-mails (decisão 9)', () => {
+    it('registra IGNORED/ESCALATED como evento COMPLETED com motivo, sem processo', async () => {
+      const ctx = await buildContext();
+
+      const ignored = await ctx.service.skipEmail(ACTOR, {
+        source: { channel: 'EMAIL', externalId: 'msg-news', receivedAt: RECEIVED_AT },
+        outcome: 'IGNORED',
+        reason: 'Newsletter do terminal.',
+      });
+      expect(ignored.duplicate).toBe(false);
+      expect(ignored.event.kind).toBe('IGNORED');
+      expect(ignored.event.status).toBe('COMPLETED');
+      expect(ignored.event.processId).toBeNull();
+      expect(ignored.event.requesterEmail).toBeNull();
+      expect(ignored.event.result?.reason).toBe('Newsletter do terminal.');
+
+      const escalated = await ctx.service.skipEmail(ACTOR, {
+        source: {
+          channel: 'EMAIL',
+          externalId: 'msg-esc',
+          subject: 'Dúvida',
+          receivedAt: RECEIVED_AT,
+        },
+        requester: { email: 'joao@clientex.com.br', name: 'João' },
+        outcome: 'ESCALATED',
+        reason: 'Sem CNPJ identificável.',
+      });
+      expect(escalated.event.kind).toBe('ESCALATED');
+      expect(escalated.event.requesterEmail).toBe('joao@clientex.com.br');
+      expect(ctx.processRepository.items).toHaveLength(0);
+    });
+
+    it('repetir o skip responde duplicate: true e nunca sobrescreve um processo já criado', async () => {
+      const ctx = await buildContext();
+      await seedCompany(ctx, VALID_CNPJ, ctx.clientOrganizationId);
+
+      const created = await ctx.service.createProcessFromEmail(ACTOR, createInput());
+      const skipAfterProcess = await ctx.service.skipEmail(ACTOR, {
+        source: { channel: 'EMAIL', externalId: 'msg-1', receivedAt: RECEIVED_AT },
+        outcome: 'IGNORED',
+        reason: 'Engano.',
+      });
+      expect(skipAfterProcess.duplicate).toBe(true);
+      expect(skipAfterProcess.event.kind).toBe('PROCESS');
+      expect(skipAfterProcess.event.processId).toBe(created.process.id);
+
+      await ctx.service.skipEmail(ACTOR, {
+        source: { channel: 'EMAIL', externalId: 'msg-x', receivedAt: RECEIVED_AT },
+        outcome: 'IGNORED',
+        reason: 'Ruído.',
+      });
+      const again = await ctx.service.skipEmail(ACTOR, {
+        source: { channel: 'EMAIL', externalId: 'msg-x', receivedAt: RECEIVED_AT },
+        outcome: 'ESCALATED',
+        reason: 'Mudei de ideia.',
+      });
+      expect(again.duplicate).toBe(true);
+      expect(again.event.kind).toBe('IGNORED');
+    });
+
+    it('escalar um evento FAILED (ex.: referência não encontrada) o conclui como ESCALATED', async () => {
+      const ctx = await buildContext();
+      await expect(
+        ctx.service.attachToProcess(ACTOR, attachInput({ processRef: 'NAO-EXISTE' })),
+      ).rejects.toBeInstanceOf(NotFoundError);
+      expect((await ctx.intakeEventRepository.findByExternalId('EMAIL', 'msg-2'))?.status).toBe(
+        'FAILED',
+      );
+
+      const result = await ctx.service.skipEmail(ACTOR, {
+        source: { channel: 'EMAIL', externalId: 'msg-2', receivedAt: RECEIVED_AT },
+        requester: { email: 'joao@clientex.com.br' },
+        outcome: 'ESCALATED',
+        reason: 'PROCESS_REF_NOT_FOUND sem candidato.',
+      });
+      expect(result.duplicate).toBe(false);
+      expect(result.event.status).toBe('COMPLETED');
+      expect(result.event.kind).toBe('ESCALATED');
+      expect(result.event.errorMessage).toBeNull();
+      expect(ctx.intakeEventRepository.items).toHaveLength(1);
+    });
+
+    it('evento PROCESSING responde 409 INTAKE_IN_PROGRESS também no skip', async () => {
+      const ctx = await buildContext();
+      await ctx.intakeEventRepository.claim({
+        channel: 'EMAIL',
+        externalId: 'msg-busy',
+        internetMessageId: null,
+        kind: 'PROCESS',
+        status: 'PROCESSING',
+        subject: null,
+        requesterName: null,
+        requesterEmail: null,
+        receivedAt: RECEIVED_AT,
+        createdById: ACTOR,
+      });
+      await expect(
+        ctx.service.skipEmail(ACTOR, {
+          source: { channel: 'EMAIL', externalId: 'msg-busy', receivedAt: RECEIVED_AT },
+          outcome: 'IGNORED',
+          reason: 'Ruído.',
+        }),
+      ).rejects.toMatchObject({ code: 'INTAKE_IN_PROGRESS' });
+    });
+
+    it('e-mail pulado pode ser processado depois: o evento é reaberto, não duplicado', async () => {
+      const ctx = await buildContext();
+      await seedCompany(ctx, VALID_CNPJ, ctx.clientOrganizationId);
+      await ctx.service.skipEmail(ACTOR, {
+        source: { channel: 'EMAIL', externalId: 'msg-1', receivedAt: RECEIVED_AT },
+        outcome: 'ESCALATED',
+        reason: 'Faltava CNPJ; pessoa confirmou depois.',
+      });
+
+      const result = await ctx.service.createProcessFromEmail(ACTOR, createInput());
+      expect(result.duplicate).toBe(false);
+      expect(result.event.kind).toBe('PROCESS');
+      expect(result.event.status).toBe('COMPLETED');
+      expect(result.event.result?.reason).toBeNull();
+      expect(ctx.intakeEventRepository.items).toHaveLength(1);
+      expect(ctx.processRepository.items).toHaveLength(1);
+    });
+
+    it('cursor é o receivedAt do último examinado (COMPLETED ou FAILED); PROCESSING não conta', async () => {
+      const ctx = await buildContext();
+      await seedCompany(ctx, VALID_CNPJ, ctx.clientOrganizationId);
+
+      expect(await ctx.service.getCursor('EMAIL')).toEqual({
+        channel: 'EMAIL',
+        receivedAt: null,
+        event: null,
+      });
+
+      const t1 = new Date('2026-09-21T10:00:00.000Z');
+      const t2 = new Date('2026-09-21T11:00:00.000Z');
+      const t3 = new Date('2026-09-21T12:00:00.000Z');
+      const t4 = new Date('2026-09-21T13:00:00.000Z');
+      await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({ source: { channel: 'EMAIL', externalId: 'a', receivedAt: t2 } }),
+      );
+      await ctx.service.skipEmail(ACTOR, {
+        source: { channel: 'EMAIL', externalId: 'b', receivedAt: t1 },
+        outcome: 'IGNORED',
+        reason: 'Ruído.',
+      });
+      expect((await ctx.service.getCursor('EMAIL')).receivedAt).toEqual(t2);
+
+      await expect(
+        ctx.service.attachToProcess(
+          ACTOR,
+          attachInput({
+            source: { channel: 'EMAIL', externalId: 'c', receivedAt: t3 },
+            processRef: 'NAO-EXISTE',
+          }),
+        ),
+      ).rejects.toBeInstanceOf(NotFoundError);
+      await ctx.intakeEventRepository.claim({
+        channel: 'EMAIL',
+        externalId: 'd',
+        internetMessageId: null,
+        kind: 'PROCESS',
+        status: 'PROCESSING',
+        subject: null,
+        requesterName: null,
+        requesterEmail: null,
+        receivedAt: t4,
+        createdById: ACTOR,
+      });
+
+      const cursor = await ctx.service.getCursor('EMAIL');
+      expect(cursor.receivedAt).toEqual(t3);
+      expect(cursor.event?.externalId).toBe('c');
+      expect(cursor.event?.status).toBe('FAILED');
     });
   });
 });

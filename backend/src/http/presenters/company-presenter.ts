@@ -3,8 +3,9 @@ import type { CnpjLookupResult } from '@/services/company-service';
 
 interface CompanyDto {
   id: string;
-  cnpj: string;
-  documentType: string;
+  /** `null` = cadastro pendente (docs/13, decisão 10). */
+  cnpj: string | null;
+  documentType: string | null;
   legalName: string;
   tradeName: string | null;
   organizationId: string;

@@ -19,7 +19,7 @@ import type { CompanySummary, Paginated } from '@/shared/types';
 
 interface CompanyDto {
   id: string;
-  cnpj: string;
+  cnpj: string | null;
   legalName: string;
   tradeName: string | null;
   organizationId: string;

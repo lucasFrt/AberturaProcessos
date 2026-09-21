@@ -30,22 +30,26 @@ test('lista as ferramentas do intake com seus campos obrigatórios', async () =>
     assert.deepEqual(names, [
       'attach_to_process',
       'create_process_from_email',
+      'get_intake_cursor',
       'get_intake_event',
       'get_process',
       'lookup_process',
+      'skip_email',
     ]);
+
+    const skip = tools.find((tool) => tool.name === 'skip_email');
+    const skipRequired = (skip?.inputSchema as { required?: string[] }).required ?? [];
+    for (const field of ['externalId', 'receivedAt', 'outcome', 'reason']) {
+      assert.ok(skipRequired.includes(field), `campo obrigatório ausente em skip_email: ${field}`);
+    }
 
     const create = tools.find((tool) => tool.name === 'create_process_from_email');
     const required = (create?.inputSchema as { required?: string[] }).required ?? [];
-    for (const field of [
-      'externalId',
-      'receivedAt',
-      'requesterEmail',
-      'companyDocument',
-      'reference',
-    ]) {
+    for (const field of ['externalId', 'receivedAt', 'requesterEmail', 'reference']) {
       assert.ok(required.includes(field), `campo obrigatório ausente: ${field}`);
     }
+    // Tarefa 27: sem CNPJ no e-mail a empresa vem do domínio do remetente.
+    assert.ok(!required.includes('companyDocument'), 'companyDocument deve ser opcional');
   } finally {
     await client.close();
   }

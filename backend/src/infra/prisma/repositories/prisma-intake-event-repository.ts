@@ -44,6 +44,7 @@ function parseResult(raw: string | null): IntakeEventResult | null {
       warnings: Array.isArray(value.warnings) ? value.warnings : [],
       company: value.company ?? null,
       organization: value.organization ?? null,
+      reason: typeof value.reason === 'string' ? value.reason : null,
     };
   } catch {
     return null;
@@ -158,6 +159,7 @@ export class PrismaIntakeEventRepository implements IntakeEventRepository {
     const where: Prisma.IntakeEventWhereInput = {
       ...(filters.externalId ? { externalId: filters.externalId } : {}),
       ...(filters.internetMessageId ? { internetMessageId: filters.internetMessageId } : {}),
+      ...(filters.kind ? { kind: filters.kind } : {}),
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.processId ? { processId: filters.processId } : {}),
     };
@@ -173,5 +175,16 @@ export class PrismaIntakeEventRepository implements IntakeEventRepository {
     ]);
 
     return { items: rows.map(toDomain), total };
+  }
+
+  async findLatestReceived(
+    channel: IntakeChannel,
+    statuses: readonly IntakeEventStatus[],
+  ): Promise<IntakeEvent | null> {
+    const row = await this.prisma.intakeEvent.findFirst({
+      where: { channel, status: { in: [...statuses] }, receivedAt: { not: null } },
+      orderBy: { receivedAt: 'desc' },
+    });
+    return row ? toDomain(row) : null;
   }
 }

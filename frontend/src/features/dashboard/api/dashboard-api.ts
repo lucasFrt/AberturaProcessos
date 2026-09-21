@@ -22,7 +22,7 @@ export interface DashboardStageMetricDto {
 
 export interface DashboardCompanyMetricDto {
   companyId: string;
-  cnpj: string;
+  cnpj: string | null;
   legalName: string;
   count: number;
 }

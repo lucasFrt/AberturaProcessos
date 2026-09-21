@@ -51,9 +51,15 @@ model Company {
   id             String   @id @default(cuid()) @db.NVarChar(30)
   /// somente dígitos: 14 posições (CNPJ) ou 11 (CPF). O nome da coluna é
   /// histórico; `documentType` diz o que ela contém (docs/13, decisão 5).
-  cnpj           String   @unique @db.NVarChar(14)
-  /// CNPJ | CPF
-  documentType   String   @default("CNPJ") @db.NVarChar(10)
+  /// NULL = cadastro pendente: empresa criada pelo intake a partir do domínio
+  /// do solicitante, sem documento no e-mail (docs/13, decisão 10). Único via
+  /// índice FILTRADO (`WHERE cnpj IS NOT NULL`, migration 20260921170000, à
+  /// mão): o SQL Server só aceita um NULL num índice único comum, e o Prisma
+  /// não expressa filtro — por isso não há `@unique` aqui (ele ignora o índice
+  /// filtrado e, com `@unique`, acusaria drift e recriaria a constraint).
+  cnpj           String?  @db.NVarChar(14)
+  /// CNPJ | CPF; NULL enquanto o cadastro está pendente
+  documentType   String?  @db.NVarChar(10)
   legalName      String   @db.NVarChar(255)
   tradeName      String?  @db.NVarChar(255)
   organizationId String   @db.NVarChar(30)
@@ -277,7 +283,7 @@ model IntakeEvent {
   /// Message-ID RFC 5322 (chave secundária de idempotência): estável quando a mensagem é movida
   /// de pasta ou lida em outra caixa — o id do Graph não é (docs/14).
   internetMessageId String? @db.NVarChar(400)
-  /// PROCESS (abertura) | ATTACHMENT (complemento de processo existente)
+  /// PROCESS (abertura) | ATTACHMENT (complemento) | IGNORED | ESCALATED (docs/13, decisão 9)
   kind           String    @db.NVarChar(20)
   /// PROCESSING | COMPLETED | FAILED
   status         String    @db.NVarChar(20)
@@ -298,6 +304,8 @@ model IntakeEvent {
 
   @@unique([channel, externalId])
   @@index([channel, internetMessageId])
+  /// Cursor do intake: "receivedAt mais recente concluído" por canal (docs/13, decisão 9).
+  @@index([channel, status, receivedAt])
   @@index([processId])
   @@index([status])
   @@map("intake_events")

@@ -3,9 +3,14 @@
 Prompt operacional do agente que lê a caixa de e-mail da trading e alimenta o sistema de
 processos (docs/13). Pressupõe dois conectores/MCPs disponíveis na tarefa agendada:
 
-- **Outlook** (conector Microsoft 365): buscar e-mails, ler corpo/anexos, aplicar categoria.
-- **abertura-processos** (`mcp-server/`): `get_intake_event`, `lookup_process`,
-  `create_process_from_email`, `attach_to_process`, `get_process`.
+- **Outlook** (conector Microsoft 365): buscar e-mails, ler corpo/anexos.
+- **abertura-processos** (`mcp-server/`): `get_intake_cursor`, `get_intake_event`,
+  `lookup_process`, `create_process_from_email`, `attach_to_process`, `skip_email`, `get_process`.
+
+Este prompt é o irmão do `rotina-intake-claude-max.md` (mesmas regras, com ferramentas MCP em vez
+de `curl`). Desde a Tarefa 27 (docs/13, decisões 9 e 10) o estado de "o que já foi lido" vive na
+API — cursor + eventos `IGNORED`/`ESCALATED` — e não em categorias do Outlook, e o agente lê a
+pasta `Intake IA` (alimentada por regra de cópia), não a caixa de entrada.
 
 Ajuste os valores entre `<...>` antes de usar. Sugestão de agendamento: a cada 15 minutos em
 horário comercial; a idempotência por `externalId` torna seguro rodar com sobreposição.
@@ -19,32 +24,37 @@ escreve um relatório curto.
 
 ## Regras invioláveis
 
-1. **Nunca invente dados.** CNPJ/CPF, referência, nome e e-mail do solicitante saem do e-mail. Se
-   um dado obrigatório não estiver no e-mail, não chute: escale (regra 6).
+1. **Nunca invente dados.** CNPJ/CPF, referência, nome e e-mail do solicitante saem do e-mail. CNPJ
+   ausente não é motivo para escalar (omita `companyDocument`: o servidor resolve a empresa pelo
+   domínio do remetente e, se preciso, cria em cadastro pendente). Sem referência ou sem pedido
+   claro, não chute: escale (regra 6).
 2. **Nunca processe o mesmo e-mail duas vezes.** Antes de agir, chame `get_intake_event` com o
    `externalId` da mensagem. `processed: true` com `status: COMPLETED` → pule. `FAILED` → pode
-   tentar de novo. Além disso, pule qualquer e-mail que já tenha a categoria
-   `Processado-IA` ou `Escalado-IA`.
-3. **Nunca copie bytes de anexo.** Passe só o id da mensagem; o servidor baixa os anexos
+   tentar de novo uma vez; falhou de novo → `skip_email` com `ESCALATED`.
+3. **Todo e-mail examinado termina registrado**: processado, ou `skip_email` com `IGNORED` /
+   `ESCALATED` e o motivo. É o que faz o cursor avançar; sem isso o e-mail volta na próxima execução.
+4. **Nunca copie bytes de anexo.** Passe só o id da mensagem; o servidor baixa os anexos
    (`fetchAttachments: true`).
-4. **Só a caixa configurada e só e-mails recebidos** (não os enviados por você/pela equipe).
-5. **Não responda ao cliente** salvo instrução explícita abaixo.
-6. **Quando estiver em dúvida, escale**: aplique a categoria `Escalado-IA` no e-mail e inclua no
-   relatório o motivo. Escalar é sempre aceitável; errar não.
+5. **Só a pasta `Intake IA` da caixa configurada.** Nunca a caixa de entrada; nunca mova, apague ou
+   categorize e-mails.
+6. **Quando estiver em dúvida, escale**: `skip_email` com `ESCALATED` e o motivo, e inclua no
+   relatório. Escalar é sempre aceitável; errar não. Não responda ao cliente.
 
 ## Passo a passo por execução
 
-1. Busque na caixa `<processos@empresa.com.br>` os e-mails recebidos nas últimas
-   `<24 horas>` que **não** tenham as categorias `Processado-IA` nem `Escalado-IA`. Ignore
-   respostas automáticas, newsletters, notificações de sistema e spam evidente (marque-os como
-   `Ignorado-IA` e não os inclua nas ferramentas).
-2. Para cada e-mail, em ordem do mais antigo para o mais novo:
+1. Chame `get_intake_cursor`. Busque na pasta `Intake IA` da caixa `<processos@empresa.com.br>` os
+   e-mails recebidos depois de `receivedAt` (menos 1 minuto de folga; se `null`, últimos 7 dias),
+   do mais antigo para o mais novo. Remetentes automáticos (`followupopus`, `multiterminais`,
+   `noreply`...), respostas automáticas, newsletters, notificações de sistema e spam: `skip_email`
+   com `IGNORED` sem ler o corpo.
+2. Para cada e-mail, em ordem do mais antigo para o mais novo, até o teto de `<12>` por execução:
    1. Extraia: `externalId` (id da mensagem no Graph — o trecho depois de `mail:///messages/`),
-      `receivedAt` (data/hora de recebimento em ISO), assunto, e-mail e nome do remetente.
+      `internetMessageId`, `receivedAt` (data/hora de recebimento em ISO), assunto, e-mail e nome
+      do remetente.
    2. Chame `get_intake_event`. Se já processado, pule para o próximo e-mail.
    3. **Classifique** o e-mail (seção abaixo) em NOVO PROCESSO, COMPLEMENTO ou ESCALAR.
-   4. Execute a ação correspondente.
-   5. Aplique a categoria no e-mail: `Processado-IA` (sucesso) ou `Escalado-IA` (não conseguiu).
+   4. Execute a ação correspondente (`create_process_from_email`, `attach_to_process` ou
+      `skip_email` com `ESCALATED`).
 3. Ao final, escreva o relatório (seção "Relatório").
 
 ## Classificação
@@ -54,13 +64,16 @@ Sinais: "processo 123123", "PRC-2026-00042", "referente ao processo", "segue doc
 pedido X", resposta (`Re:`) a um e-mail de abertura, mesma referência de um processo que
 `lookup_process` encontra como `CODE` ou `REFERENCE`.
 
-**NOVO PROCESSO** — o e-mail pede a abertura de um processo/embarque/importação/exportação e traz
-(ou permite identificar) CNPJ ou CPF do cliente e uma referência (número de pedido, invoice,
-contêiner, BL, PO...). Se não citar processo existente e `lookup_process` pela referência não
-encontrar nada exato, é novo.
+**NOVO PROCESSO** — o e-mail pede a abertura de um processo/embarque/importação/exportação, ou
+manda "os documentos do processo NNN/26" (numeração do próprio cliente), e traz uma referência
+(número de pedido, invoice, contêiner, BL, PO...). O CNPJ pode faltar — o servidor resolve a
+empresa pelo domínio do remetente. Se não citar processo existente e `lookup_process` pela
+referência não encontrar nada exato, é novo.
 
-**ESCALAR** — qualquer um destes: não há CNPJ/CPF identificável; não há referência nenhuma; o
-e-mail pede algo que não é abrir/complementar processo (cancelamento, cobrança, reclamação, dúvida);
+**ESCALAR** — qualquer um destes: não há referência nenhuma; remetente de webmail (gmail,
+hotmail...) sem CNPJ/CPF no e-mail (`COMPANY_REQUIRED`); domínio com várias empresas e sem como
+escolher (`COMPANY_AMBIGUOUS`); o e-mail pede algo que não é abrir/complementar processo
+(cancelamento, cobrança, reclamação, dúvida);
 o remetente pede algo em nome de terceiro sem identificar a empresa; você não tem confiança na
 classificação.
 

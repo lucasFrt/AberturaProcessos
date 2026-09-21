@@ -10,7 +10,7 @@ import { MoveStageModal } from '@/features/processes/components/MoveStageModal';
 import { useAssignResponsible } from '@/features/processes/hooks/useAssignResponsible';
 import { useUpdateProcess } from '@/features/processes/hooks/useUpdateProcess';
 import { translateError } from '@/shared/api/errors';
-import { maskDocument } from '@/shared/lib/cnpj';
+import { formatCompanyDocument } from '@/shared/lib/cnpj';
 import { formatDateTime } from '@/shared/lib/format';
 
 interface ProcessDataTabProps {
@@ -142,11 +142,12 @@ export function ProcessDataTab({ process }: ProcessDataTabProps): ReactElement {
 
       <Descriptions column={1} bordered size="small">
         <Descriptions.Item label="Cliente">
-          {maskDocument(process.clientCompany.cnpj)} — {process.clientCompany.legalName}
+          {formatCompanyDocument(process.clientCompany.cnpj)} — {process.clientCompany.legalName}
         </Descriptions.Item>
         {process.requestingCompany && (
           <Descriptions.Item label="Solicitante (empresa)">
-            {maskDocument(process.requestingCompany.cnpj)} — {process.requestingCompany.legalName}
+            {formatCompanyDocument(process.requestingCompany.cnpj)} —{' '}
+            {process.requestingCompany.legalName}
           </Descriptions.Item>
         )}
         <Descriptions.Item label="Origem">

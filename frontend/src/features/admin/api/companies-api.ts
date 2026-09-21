@@ -10,9 +10,13 @@ import type { Paginated } from '@/shared/types';
 
 export interface CompanyDto {
   id: string;
-  /** Somente dígitos: 14 (CNPJ) ou 11 (CPF) — ver `documentType`. */
-  cnpj: string;
-  documentType: 'CNPJ' | 'CPF';
+  /**
+   * Somente dígitos: 14 (CNPJ) ou 11 (CPF) — ver `documentType`. `null` =
+   * cadastro pendente, criado pelo intake pelo domínio do e-mail (docs/13,
+   * decisão 10).
+   */
+  cnpj: string | null;
+  documentType: 'CNPJ' | 'CPF' | null;
   legalName: string;
   tradeName: string | null;
   organizationId: string;
@@ -26,6 +30,8 @@ export interface ListCompaniesParams {
   q?: string;
   organizationId?: string;
   isActive?: boolean;
+  /** `true` lista só cadastros pendentes (sem CNPJ). */
+  pendingRegistration?: boolean;
   page?: number;
   pageSize?: number;
 }
@@ -50,6 +56,8 @@ export async function createCompany(payload: CreateCompanyPayload): Promise<Comp
 }
 
 export interface UpdateCompanyPayload {
+  /** Só para concluir cadastro pendente; a API recusa em empresa já completa. */
+  cnpj?: string;
   legalName?: string;
   tradeName?: string;
   isActive?: boolean;

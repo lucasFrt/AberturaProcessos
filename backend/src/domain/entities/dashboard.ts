@@ -27,7 +27,7 @@ export interface DashboardStageCount {
 
 export interface DashboardCompanyCount {
   companyId: string;
-  cnpj: string;
+  cnpj: string | null;
   legalName: string;
   count: number;
 }

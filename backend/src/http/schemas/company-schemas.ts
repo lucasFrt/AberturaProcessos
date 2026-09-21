@@ -13,6 +13,8 @@ export type CreateCompanyBody = z.infer<typeof createCompanySchema>;
 
 export const updateCompanySchema = z
   .object({
+    /** Só para concluir cadastro pendente (docs/13, decisão 10); o service recusa nos demais casos. */
+    cnpj: z.string().trim().min(11, 'CNPJ/CPF inválido.').max(20).optional(),
     legalName: z.string().trim().min(1).max(255).optional(),
     tradeName: z.string().trim().max(255).nullable().optional(),
     isActive: z.boolean().optional(),
@@ -20,6 +22,7 @@ export const updateCompanySchema = z
   })
   .refine(
     (data) =>
+      data.cnpj !== undefined ||
       data.legalName !== undefined ||
       data.tradeName !== undefined ||
       data.isActive !== undefined ||
@@ -32,6 +35,11 @@ export const listCompaniesQuerySchema = paginationQuerySchema.extend({
   q: z.string().trim().min(1).optional(),
   organizationId: z.string().min(1).optional(),
   isActive: z.coerce.boolean().optional(),
+  // Não usar z.coerce.boolean(): "false" viraria true (CLAUDE.md).
+  pendingRegistration: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .optional(),
 });
 export type ListCompaniesQuery = z.infer<typeof listCompaniesQuerySchema>;
 

@@ -40,6 +40,7 @@ Base: `/api/v1`. Todo corpo de requisição e resposta é `application/json`, ex
 | 400 | `VALIDATION_ERROR` | Falha de schema Zod. `details` lista os campos. |
 | 400 | `INVALID_CNPJ` | CNPJ (14 dígitos) com dígitos verificadores inválidos. |
 | 400 | `INVALID_CPF` | CPF (11 dígitos) com dígitos verificadores inválidos. |
+| 400 | `COMPANY_REQUIRED` | Intake: e-mail sem CNPJ/CPF e remetente sem domínio corporativo (webmail público) — não há como identificar a empresa. |
 | 401 | `UNAUTHENTICATED` | Sem token, token expirado ou inválido. |
 | 401 | `INVALID_CREDENTIALS` | E-mail ou senha incorretos. |
 | 403 | `FORBIDDEN` | Autenticado, porém sem papel/permissão para a ação. |
@@ -53,6 +54,8 @@ Base: `/api/v1`. Todo corpo de requisição e resposta é `application/json`, ex
 | 409 | `STAGE_NOT_EMPTY` | Exclusão de etapa que ainda contém processos ativos. |
 | 409 | `PROCESS_REF_AMBIGUOUS` | Intake: mais de um processo com a referência citada. `details.candidates` lista-os. |
 | 409 | `COMPANY_INACTIVE` | Intake: o CNPJ/CPF do e-mail está cadastrado como inativo. |
+| 409 | `COMPANY_AMBIGUOUS` | Intake: e-mail sem CNPJ/CPF e o domínio do remetente tem mais de uma empresa ativa. `details.candidates` lista-as. |
+| 409 | `COMPANY_DOCUMENT_LOCKED` | `PATCH /companies/:id` com `cnpj` em empresa que já tem documento — só cadastro pendente aceita. |
 | 409 | `INTAKE_IN_PROGRESS` | Intake: a mesma mensagem está sendo processada por outra execução. |
 | 413 | `PAYLOAD_TOO_LARGE` | Upload acima de `MAX_UPLOAD_SIZE_MB`. |
 | 429 | `RATE_LIMIT_EXCEEDED` | Limite atingido. Header `Retry-After` presente. |
@@ -232,16 +235,23 @@ vez por minuto por chave.
 
 | Método | Rota | Descrição |
 | --- | --- | --- |
-| `GET` | `/companies` | Filtros: `q` (razão social, nome fantasia ou CNPJ), `organizationId`, `isActive`. CLIENT recebe apenas os CNPJs do seu escopo. |
+| `GET` | `/companies` | Filtros: `q` (razão social, nome fantasia ou CNPJ), `organizationId`, `isActive`, `pendingRegistration` (`true` = só cadastros pendentes, sem CNPJ). CLIENT recebe apenas os CNPJs do seu escopo. |
 | `POST` | `/companies` | `{ cnpj, legalName, tradeName?, organizationId }`. `cnpj` aceita CNPJ (14 dígitos) **ou CPF** (11); a resposta traz `documentType: "CNPJ" \| "CPF"` (docs/13, decisão 5). |
 | `GET` | `/companies/lookup/:cnpj` | Consulta os dados cadastrais na Receita para autopreencher o formulário. Ver abaixo. |
 | `GET` | `/companies/:id` | Detalhe. |
-| `PATCH` | `/companies/:id` | `{ legalName?, tradeName?, isActive?, organizationId? }` |
+| `PATCH` | `/companies/:id` | `{ cnpj?, legalName?, tradeName?, isActive?, organizationId? }`. `cnpj` só é aceito para **concluir cadastro pendente** (empresa com `cnpj: null`); em empresa já completa responde `409 COMPANY_DOCUMENT_LOCKED`. |
 | `DELETE` | `/companies/:id` | `409 CONFLICT` se houver processos. |
 
 O CNPJ/CPF é aceito com ou sem máscara e persistido apenas com dígitos na coluna `cnpj`
 (nome histórico); `documentType` diz o que ela contém. A consulta na Receita
 (`GET /companies/lookup/:cnpj`) só existe para CNPJ.
+
+**Cadastro pendente** (docs/13, decisão 10): o intake por e-mail cria a empresa **sem documento**
+quando o e-mail não traz CNPJ/CPF, identificando-a pelo domínio do remetente. Nas respostas ela
+aparece com `cnpj: null` e `documentType: null` — em `GET /companies`, no `clientCompany` dos
+processos, em `GET /auth/me` e no dashboard. O front exibe "Cadastro pendente" no lugar do
+documento; o ADMIN completa pelo `PATCH /companies/:id` com `cnpj`. Um e-mail posterior do mesmo
+domínio que traga o CNPJ também conclui o cadastro automaticamente.
 
 ### `GET /companies/lookup/:cnpj`
 
@@ -542,7 +552,16 @@ Abre um processo a partir de um e-mail (docs/13, decisões 3 a 5).
 - `company.document` aceita CNPJ ou CPF, com ou sem máscara. Empresa desconhecida é **cadastrada**:
   razão social pela Receita (se `CNPJ_LOOKUP_ENABLED`), senão `company.name`, senão o próprio
   documento; organização pelo domínio de `requester.email` (conhecido → usa; desconhecido → cria e,
-  se não for webmail público, registra o domínio com `autoApprove = false`).
+  se não for webmail público, registra o domínio com `autoApprove = false`). Se a organização do
+  domínio já tinha uma empresa em **cadastro pendente**, o documento conclui esse cadastro em vez de
+  criar outra empresa.
+- `company` pode ser `null` ou vir **sem `document`** (docs/13, decisão 10 — a maioria dos e-mails
+  de cliente recorrente não repete o CNPJ). A empresa é então resolvida pelo **domínio** de
+  `requester.email`: uma empresa ativa na organização do domínio → usa; várias → desempate por
+  `company.name` contra razão social/nome fantasia, senão `409 COMPANY_AMBIGUOUS` com
+  `details.candidates`; nenhuma (organização sem empresa ou domínio corporativo nunca visto) → cria
+  a empresa em **cadastro pendente** (`cnpj: null`, nome = `company.name` ou o domínio) e abre o
+  processo mesmo assim; webmail público → `400 COMPANY_REQUIRED`.
 - `fetchAttachments: true` faz o servidor baixar os anexos da mensagem pelo Graph (`GRAPH_*`).
   Anexos inline (assinaturas) são ignorados; acima de `MAX_UPLOAD_SIZE_MB` são pulados com aviso.
 
@@ -561,8 +580,9 @@ Abre um processo a partir de um e-mail (docs/13, decisões 3 a 5).
 ```
 
 `warnings` lista tudo que o agente deve relatar e o ADMIN revisar. Erros: `400 INVALID_CNPJ` /
-`INVALID_CPF`, `409 COMPANY_INACTIVE`, `409 INTAKE_IN_PROGRESS`, `404 MAIL_MESSAGE_NOT_FOUND`,
-`503 MAIL_ATTACHMENTS_DISABLED` / `MAIL_ATTACHMENTS_UNAVAILABLE`.
+`INVALID_CPF` / `COMPANY_REQUIRED`, `409 COMPANY_INACTIVE` / `COMPANY_AMBIGUOUS`,
+`409 INTAKE_IN_PROGRESS`, `404 MAIL_MESSAGE_NOT_FOUND`, `503 MAIL_ATTACHMENTS_DISABLED` /
+`MAIL_ATTACHMENTS_UNAVAILABLE`.
 
 ### `POST /intake/attachments`
 
@@ -606,10 +626,52 @@ Candidatos para o agente conferir antes de decidir entre abrir e complementar. Q
 
 ### `GET /intake/events`
 
-Eventos de intake, mais recentes primeiro. Filtros: `externalId`, `internetMessageId`, `status`
-(`PROCESSING | COMPLETED | FAILED`), `processId`, paginação padrão. Serve para o agente checar se
-uma mensagem já foi processada (`externalId`) antes de gastar trabalho, e para o operacional
-auditar o que a IA fez.
+Eventos de intake, mais recentes primeiro. Filtros: `externalId`, `internetMessageId`, `kind`
+(`PROCESS | ATTACHMENT | IGNORED | ESCALATED`), `status` (`PROCESSING | COMPLETED | FAILED`),
+`processId`, paginação padrão. Serve para o agente checar se uma mensagem já foi processada
+(`externalId`) antes de gastar trabalho, listar retentativas pendentes (`status=FAILED`), e para o
+operacional auditar o que a IA fez (`kind=ESCALATED` = o que ficou para uma pessoa).
+
+### `GET /intake/cursor`
+
+De onde a próxima execução do agente continua a leitura da pasta de intake (docs/13, decisão 9).
+Query: `channel` (padrão `EMAIL`).
+
+```json
+{ "channel": "EMAIL", "receivedAt": "2026-09-21T15:33:40.000Z", "event": { "...": "evento com o maior receivedAt entre COMPLETED e FAILED" } }
+```
+
+`receivedAt` é o `source.receivedAt` do **último e-mail examinado** — concluído (`COMPLETED`,
+inclusive `IGNORED`/`ESCALATED`) ou com tentativa falha (`FAILED`); `null` antes do primeiro.
+`PROCESSING` não conta (pode ser uma execução interrompida). A retentativa de `FAILED` não é pelo
+cursor, e sim por `GET /intake/events?status=FAILED`.
+
+### `POST /intake/events/skip`
+
+Registra um e-mail examinado que **não** vira processo, para o cursor avançar por ele (docs/13,
+decisão 9). Idempotente pelas mesmas chaves dos demais (`externalId`, `internetMessageId`).
+
+```json
+{
+  "source": { "channel": "EMAIL", "externalId": "AAMkAGI2...", "internetMessageId": "<abc@x.com>", "subject": "Fatura 1234", "receivedAt": "2026-09-21T15:33:40.000Z" },
+  "requester": { "email": "faturamento@terminal.com.br", "name": null },
+  "outcome": "IGNORED",
+  "reason": "Notificação automática de faturamento do terminal."
+}
+```
+
+`outcome`: `IGNORED` (ruído descartado) ou `ESCALATED` (precisa de uma pessoa). `requester` é
+opcional. `201` com `{ duplicate: false, event }` — o evento fica `kind = outcome`,
+`status = COMPLETED`, `processId = null` e `result.reason` com o motivo. Regras:
+
+- mensagem já `COMPLETED` (processo criado/complementado ou já pulada) → `200` com
+  `duplicate: true` e o evento existente, **sem alterar nada**;
+- `FAILED` (ex.: `PROCESS_REF_NOT_FOUND` sem candidato e o agente desistiu) → o evento é concluído
+  como `outcome` e sai da lista de retentativas;
+- `PROCESSING` → `409 INTAKE_IN_PROGRESS`.
+
+Um e-mail pulado pode ser processado depois (`POST /intake/processes` ou `/attachments` com o mesmo
+`externalId`): o evento é reaberto como `PROCESS`/`ATTACHMENT`, não duplicado.
 
 ## Dashboard (ADMIN)
 

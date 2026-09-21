@@ -4,7 +4,7 @@ import type {
   IntakeEventFilters,
   UpdateIntakeEventData,
 } from '@/domain/entities/intake-event';
-import type { IntakeChannel } from '@/domain/enums';
+import type { IntakeChannel, IntakeEventStatus } from '@/domain/enums';
 import type { Page, PaginationParams } from '@/domain/pagination';
 
 /**
@@ -33,4 +33,12 @@ export interface IntakeEventRepository {
   update(id: string, data: UpdateIntakeEventData): Promise<IntakeEvent>;
   /** Mais recentes primeiro. Intake é interno (OPERATIONAL/ADMIN), então não recebe `AccessScope`. */
   list(filters: IntakeEventFilters, pagination: PaginationParams): Promise<Page<IntakeEvent>>;
+  /**
+   * Evento com o maior `receivedAt` entre os de `status` informado — o cursor
+   * de leitura da pasta de intake (docs/13, decisão 9). `null` se não há nenhum.
+   */
+  findLatestReceived(
+    channel: IntakeChannel,
+    statuses: readonly IntakeEventStatus[],
+  ): Promise<IntakeEvent | null>;
 }

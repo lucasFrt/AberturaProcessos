@@ -12,8 +12,8 @@ import type { CompanyRepository } from '@/domain/repositories/company-repository
 
 interface CompanyRecord {
   id: string;
-  cnpj: string;
-  documentType: string;
+  cnpj: string | null;
+  documentType: string | null;
   legalName: string;
   tradeName: string | null;
   organizationId: string;
@@ -28,7 +28,8 @@ function toDomain(record: CompanyRecord): Company {
   return {
     id: record.id,
     cnpj: record.cnpj,
-    documentType: record.documentType as CompanyDocumentType,
+    documentType:
+      record.documentType === null ? null : (record.documentType as CompanyDocumentType),
     legalName: record.legalName,
     tradeName: record.tradeName,
     organizationId: record.organizationId,
@@ -56,7 +57,8 @@ export class PrismaCompanyRepository implements CompanyRepository {
   }
 
   async findByCnpj(cnpj: string): Promise<Company | null> {
-    const row = await this.prisma.company.findUnique({ where: { cnpj } });
+    // `findFirst`: a unicidade é de um índice filtrado que o Prisma não conhece (docs/04).
+    const row = await this.prisma.company.findFirst({ where: { cnpj } });
     return row ? toDomain(row) : null;
   }
 
@@ -64,6 +66,9 @@ export class PrismaCompanyRepository implements CompanyRepository {
     const where: Prisma.CompanyWhereInput = {
       ...(filters.organizationId ? { organizationId: filters.organizationId } : {}),
       ...(filters.isActive !== undefined ? { isActive: filters.isActive } : {}),
+      ...(filters.pendingRegistration !== undefined
+        ? { cnpj: filters.pendingRegistration ? null : { not: null } }
+        : {}),
       ...(filters.q
         ? {
             OR: [
@@ -96,6 +101,8 @@ export class PrismaCompanyRepository implements CompanyRepository {
 
   async update(id: string, data: UpdateCompanyData): Promise<Company> {
     const updateData: Prisma.CompanyUpdateInput = {
+      ...(data.cnpj !== undefined ? { cnpj: data.cnpj } : {}),
+      ...(data.documentType !== undefined ? { documentType: data.documentType } : {}),
       ...(data.legalName !== undefined ? { legalName: data.legalName } : {}),
       ...(data.tradeName !== undefined ? { tradeName: data.tradeName } : {}),
       ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),

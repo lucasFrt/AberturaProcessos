@@ -36,6 +36,8 @@ export interface IntakeEventResult {
   warnings: string[];
   company: { id: string; created: boolean } | null;
   organization: { id: string; created: boolean; domainRegistered: boolean } | null;
+  /** Por que o e-mail foi IGNORED/ESCALATED (docs/13, decisão 9); `null` nos demais kinds. */
+  reason: string | null;
 }
 
 export interface CreateIntakeEventData {
@@ -65,6 +67,7 @@ export interface UpdateIntakeEventData {
 export interface IntakeEventFilters {
   externalId?: string | undefined;
   internetMessageId?: string | undefined;
+  kind?: IntakeEventKind | undefined;
   status?: IntakeEventStatus | undefined;
   processId?: string | undefined;
 }

@@ -108,3 +108,14 @@ export function maskDocument(rawValue: string): string {
   const digits = normalizeCnpjDigits(rawValue);
   return digits.length <= 11 ? maskCpf(digits) : maskCnpj(digits);
 }
+
+export const PENDING_REGISTRATION_LABEL = 'Cadastro pendente';
+
+/**
+ * Documento da empresa para exibição. `null` é cadastro pendente: empresa
+ * criada pelo intake a partir do domínio do e-mail, sem CNPJ (docs/13,
+ * decisão 10) — aparece assim até alguém completar na tela de empresas.
+ */
+export function formatCompanyDocument(cnpj: string | null): string {
+  return cnpj ? maskDocument(cnpj) : PENDING_REGISTRATION_LABEL;
+}

@@ -4,7 +4,7 @@ import type {
   IntakeEventFilters,
   UpdateIntakeEventData,
 } from '@/domain/entities/intake-event';
-import type { IntakeChannel } from '@/domain/enums';
+import type { IntakeChannel, IntakeEventStatus } from '@/domain/enums';
 import type { Page, PaginationParams } from '@/domain/pagination';
 import type {
   ClaimOutcome,
@@ -82,6 +82,7 @@ export class InMemoryIntakeEventRepository implements IntakeEventRepository {
       if (filters.externalId && item.externalId !== filters.externalId) return false;
       if (filters.internetMessageId && item.internetMessageId !== filters.internetMessageId)
         return false;
+      if (filters.kind && item.kind !== filters.kind) return false;
       if (filters.status && item.status !== filters.status) return false;
       if (filters.processId && item.processId !== filters.processId) return false;
       return true;
@@ -89,5 +90,16 @@ export class InMemoryIntakeEventRepository implements IntakeEventRepository {
     const sorted = [...filtered].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     const start = (pagination.page - 1) * pagination.pageSize;
     return { items: sorted.slice(start, start + pagination.pageSize), total: sorted.length };
+  }
+
+  async findLatestReceived(
+    channel: IntakeChannel,
+    statuses: readonly IntakeEventStatus[],
+  ): Promise<IntakeEvent | null> {
+    const candidates = this.items.filter(
+      (item) => item.channel === channel && statuses.includes(item.status) && item.receivedAt,
+    );
+    candidates.sort((a, b) => (b.receivedAt?.getTime() ?? 0) - (a.receivedAt?.getTime() ?? 0));
+    return candidates[0] ?? null;
   }
 }

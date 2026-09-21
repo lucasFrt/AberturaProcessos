@@ -57,8 +57,12 @@ export interface IntakeRequester {
 }
 
 export interface IntakeCompanyRef {
-  /** CNPJ ou CPF, com ou sem máscara. */
-  document: string;
+  /**
+   * CNPJ ou CPF, com ou sem máscara. Ausente = resolver pelo domínio do
+   * solicitante (docs/13, decisão 5): cliente recorrente manda "Novo
+   * processo 230/26" sem repetir o CNPJ.
+   */
+  document?: string | null | undefined;
   /** Razão social/nome informado no e-mail — usado quando a Receita não responde ou é CPF. */
   name?: string | null | undefined;
 }
@@ -98,6 +102,31 @@ export interface IntakeResult {
   company: { id: string; created: boolean } | null;
   organization: { id: string; created: boolean; domainRegistered: boolean } | null;
   warnings: string[];
+}
+
+/** E-mail que o agente decidiu não transformar em processo (docs/13, decisão 9). */
+export interface SkipIntakeInput {
+  source: IntakeSource;
+  /** Remetente, quando faz sentido guardar (ruído automático pode não ter). */
+  requester?: IntakeRequester | null | undefined;
+  /** IGNORED = ruído descartado; ESCALATED = precisa de uma pessoa. */
+  outcome: Extract<IntakeEventKind, 'IGNORED' | 'ESCALATED'>;
+  /** Motivo curto, para o operacional entender a decisão sem reler o e-mail. */
+  reason: string;
+}
+
+export interface SkipIntakeResult {
+  event: IntakeEvent;
+  /** `true` quando a mensagem já tinha desfecho registrado — nada foi alterado. */
+  duplicate: boolean;
+}
+
+/** Ponto de onde a próxima execução do agente continua a leitura (docs/13, decisão 9). */
+export interface IntakeCursor {
+  channel: IntakeChannel;
+  /** `receivedAt` do último e-mail examinado (COMPLETED ou FAILED); `null` antes do primeiro. */
+  receivedAt: Date | null;
+  event: IntakeEvent | null;
 }
 
 export type ProcessMatchKind = 'CODE' | 'REFERENCE' | 'PARTIAL';
@@ -171,7 +200,7 @@ export function toCandidate(item: ProcessListItem): {
   id: string;
   code: string;
   reference: string;
-  clientCompany: { id: string; cnpj: string; legalName: string };
+  clientCompany: { id: string; cnpj: string | null; legalName: string };
   currentStage: string;
   createdAt: string;
 } {
@@ -264,6 +293,7 @@ export class IntakeService {
         warnings,
         company: companyOutcome,
         organization: organizationOutcome,
+        reason: null,
       });
     } catch (error) {
       await this.fail(event, error);
@@ -303,6 +333,7 @@ export class IntakeService {
         warnings,
         company: null,
         organization: null,
+        reason: null,
       });
     } catch (error) {
       await this.fail(event, error);
@@ -366,6 +397,77 @@ export class IntakeService {
     return this.deps.intakeEventRepository.list(filters, pagination);
   }
 
+  /**
+   * Registra um e-mail descartado ou escalado (docs/13, decisão 9). Sem
+   * isso o cursor não passaria por ele e a próxima execução o releria.
+   * Nunca sobrescreve um desfecho real: mensagem já COMPLETED (processo
+   * criado/complementado, ou já pulada) responde `duplicate: true`.
+   */
+  async skipEmail(actorId: string, input: SkipIntakeInput): Promise<SkipIntakeResult> {
+    const outcome = await this.deps.intakeEventRepository.claim({
+      channel: input.source.channel,
+      externalId: input.source.externalId,
+      internetMessageId: input.source.internetMessageId ?? null,
+      kind: input.outcome,
+      status: 'PROCESSING',
+      subject: input.source.subject ?? null,
+      requesterName: input.requester?.name ?? null,
+      requesterEmail: input.requester?.email ?? null,
+      receivedAt: input.source.receivedAt,
+      createdById: actorId,
+    });
+
+    let eventId: string;
+    if (outcome.created) {
+      eventId = outcome.event.id;
+    } else if (outcome.existing.status === 'COMPLETED') {
+      return { event: outcome.existing, duplicate: true };
+    } else if (outcome.existing.status === 'PROCESSING') {
+      throw new ConflictError(
+        'INTAKE_IN_PROGRESS',
+        'Esta mensagem está sendo processada por outra execução. Tente novamente em instantes.',
+        { eventId: outcome.existing.id },
+      );
+    } else {
+      // FAILED: o agente desistiu de retomar (ex.: PROCESS_REF_NOT_FOUND sem
+      // candidato) e está escalando. O evento passa a refletir isso.
+      eventId = outcome.existing.id;
+    }
+
+    const event = await this.deps.intakeEventRepository.update(eventId, {
+      kind: input.outcome,
+      status: 'COMPLETED',
+      errorMessage: null,
+      ...(outcome.created || outcome.existing.externalId === input.source.externalId
+        ? {}
+        : { externalId: input.source.externalId }),
+      result: {
+        documentIds: [],
+        warnings: [],
+        company: null,
+        organization: null,
+        reason: input.reason.trim().slice(0, 1000),
+      },
+    });
+    return { event, duplicate: false };
+  }
+
+  /**
+   * Cursor de leitura (docs/13, decisão 9): a rotina busca na pasta de
+   * intake só o que chegou depois do `receivedAt` do último e-mail
+   * examinado (COMPLETED ou FAILED). FAILED conta porque a retentativa
+   * não é pelo cursor — é pela lista `status=FAILED`, que a rotina relê a
+   * cada execução até concluir ou escalar cada um. PROCESSING não conta:
+   * pode ser uma execução interrompida no meio.
+   */
+  async getCursor(channel: IntakeChannel): Promise<IntakeCursor> {
+    const event = await this.deps.intakeEventRepository.findLatestReceived(channel, [
+      'COMPLETED',
+      'FAILED',
+    ]);
+    return { channel, receivedAt: event?.receivedAt ?? null, event };
+  }
+
   // ── Idempotência (docs/13, decisão 4) ─────────────────────────────
 
   private async claim(
@@ -395,8 +497,19 @@ export class IntakeService {
     }
 
     const existing = outcome.existing;
-    if (existing.status === 'COMPLETED') {
+    if (existing.status === 'COMPLETED' && existing.processId) {
       return { kind: 'duplicate', result: await this.resultFromCompletedEvent(existing) };
+    }
+    if (existing.status === 'COMPLETED') {
+      // IGNORED/ESCALATED (docs/13, decisão 9): o agente mudou de ideia e
+      // agora quer processar. Reaproveita o evento como uma retomada.
+      const reopened = await this.deps.intakeEventRepository.update(existing.id, {
+        status: 'PROCESSING',
+        kind,
+        result: null,
+        ...(existing.externalId !== source.externalId ? { externalId: source.externalId } : {}),
+      });
+      return { kind: 'claimed', event: reopened, resumeProcessId: null };
     }
     if (existing.status === 'PROCESSING') {
       throw new ConflictError(
@@ -565,9 +678,14 @@ export class IntakeService {
     created: boolean;
     organization: { id: string; created: boolean; domainRegistered: boolean };
   }> {
-    const classified = classifyDocument(ref.document);
+    const document = ref.document?.trim() ?? '';
+    if (document.length === 0) {
+      return this.resolveCompanyByDomain(requesterEmail, ref.name ?? null, warnings);
+    }
+
+    const classified = classifyDocument(document);
     if (!classified) {
-      const digits = normalizeCnpjDigits(ref.document);
+      const digits = normalizeCnpjDigits(document);
       if (digits.length === 11) {
         throw new AppError('INVALID_CPF', 'CPF com dígitos verificadores inválidos.', 400);
       }
@@ -580,7 +698,7 @@ export class IntakeService {
         // Desativar foi decisão humana; o agente escala em vez de contornar.
         throw new ConflictError(
           'COMPANY_INACTIVE',
-          `A empresa ${formatDocument(existing.cnpj)} está inativa no sistema.`,
+          `A empresa ${formatDocument(classified.digits)} está inativa no sistema.`,
           { companyId: existing.id },
         );
       }
@@ -594,6 +712,29 @@ export class IntakeService {
     const legalName = await this.resolveLegalName(classified, ref.name ?? null, warnings);
     const organization = await this.resolveOrganization(requesterEmail, legalName, warnings);
 
+    // A organização do domínio pode ter uma empresa em cadastro pendente
+    // (criada por um e-mail anterior sem CNPJ, decisão 10): este e-mail
+    // trouxe o documento, então conclui aquele cadastro em vez de criar uma
+    // segunda empresa para o mesmo cliente.
+    if (!organization.created) {
+      const pending = await this.deps.companyRepository.list(
+        { organizationId: organization.id, isActive: true, pendingRegistration: true },
+        { page: 1, pageSize: 2 },
+      );
+      const only = pending.items.length === 1 ? pending.items[0] : undefined;
+      if (only) {
+        const completed = await this.deps.companyRepository.update(only.id, {
+          cnpj: classified.digits,
+          documentType: classified.kind,
+          legalName,
+        });
+        warnings.push(
+          `Cadastro pendente de "${only.legalName}" concluído com ${formatDocument(classified.digits)} (${legalName}).`,
+        );
+        return { company: completed, created: false, organization };
+      }
+    }
+
     const company = await this.deps.companyRepository.create({
       cnpj: classified.digits,
       documentType: classified.kind,
@@ -602,10 +743,98 @@ export class IntakeService {
       organizationId: organization.id,
     });
     warnings.push(
-      `Empresa ${formatDocument(company.cnpj)} (${company.legalName}) cadastrada automaticamente.`,
+      `Empresa ${formatDocument(classified.digits)} (${company.legalName}) cadastrada automaticamente.`,
     );
 
     return { company, created: true, organization };
+  }
+
+  /**
+   * Sem CNPJ no e-mail, a empresa vem do domínio do solicitante (docs/13,
+   * decisão 10): o domínio aponta a organização e a organização tem as
+   * empresas. Uma empresa ativa resolve sozinha; várias exigem o nome
+   * (assinatura) ou o documento. Domínio corporativo ainda desconhecido, ou
+   * conhecido mas sem empresa, **não bloqueia**: cria a empresa em
+   * "cadastro pendente" (sem CNPJ) para o processo abrir e a origem ficar
+   * registrada; alguém completa o CNPJ depois. Só webmail público (um
+   * `@gmail.com` não identifica empresa nenhuma) responde `COMPANY_REQUIRED`.
+   */
+  private async resolveCompanyByDomain(
+    requesterEmail: string,
+    nameHint: string | null,
+    warnings: string[],
+  ): Promise<{
+    company: Company;
+    created: boolean;
+    organization: { id: string; created: boolean; domainRegistered: boolean };
+  }> {
+    const domain = emailDomainOf(requesterEmail);
+    if (!domain || PUBLIC_WEBMAIL_DOMAINS.has(domain)) {
+      throw new AppError(
+        'COMPANY_REQUIRED',
+        `Sem CNPJ/CPF no e-mail e o remetente (${requesterEmail}) não tem domínio corporativo: não dá para identificar a empresa. Informe company.document.`,
+        400,
+        { domain },
+      );
+    }
+
+    const name = nameHint?.trim() || domain;
+    const organization = await this.resolveOrganization(requesterEmail, name, warnings);
+    const page = organization.created
+      ? { items: [] as Company[] }
+      : await this.deps.companyRepository.list(
+          { organizationId: organization.id, isActive: true },
+          { page: 1, pageSize: 50 },
+        );
+    let candidates = page.items;
+    if (candidates.length === 0) {
+      const company = await this.deps.companyRepository.create({
+        cnpj: null,
+        documentType: null,
+        legalName: name,
+        tradeName: null,
+        organizationId: organization.id,
+      });
+      warnings.push(
+        `Sem CNPJ/CPF no e-mail: empresa "${name}" criada em cadastro pendente pelo domínio ${domain}. Complete o CNPJ na tela de empresas.`,
+      );
+      return { company, created: true, organization };
+    }
+
+    if (candidates.length > 1 && nameHint) {
+      const hint = nameHint.trim().toLowerCase();
+      const byName = candidates.filter(
+        (company) =>
+          company.legalName.toLowerCase().includes(hint) ||
+          (company.tradeName?.toLowerCase().includes(hint) ?? false),
+      );
+      if (byName.length === 1) candidates = byName;
+    }
+    if (candidates.length > 1) {
+      throw new ConflictError(
+        'COMPANY_AMBIGUOUS',
+        `Mais de uma empresa ativa para o domínio ${domain}. Informe company.document.`,
+        {
+          candidates: candidates.map((company) => ({
+            id: company.id,
+            cnpj: company.cnpj,
+            legalName: company.legalName,
+            tradeName: company.tradeName,
+          })),
+        },
+      );
+    }
+
+    const company = candidates[0];
+    if (!company) {
+      throw new AppError('INTERNAL_ERROR', 'Falha ao resolver empresa pelo domínio.', 500);
+    }
+    warnings.push(
+      company.cnpj
+        ? `Sem CNPJ/CPF no e-mail: empresa ${formatDocument(company.cnpj)} (${company.legalName}) resolvida pelo domínio ${domain} do solicitante.`
+        : `Sem CNPJ/CPF no e-mail: empresa "${company.legalName}" (cadastro pendente) resolvida pelo domínio ${domain}. Complete o CNPJ na tela de empresas.`,
+    );
+    return { company, created: false, organization };
   }
 
   private async resolveLegalName(

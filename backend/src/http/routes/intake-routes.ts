@@ -12,8 +12,10 @@ import { validate } from '@/http/middlewares/validate';
 import {
   intakeAttachSchema,
   intakeCreateProcessSchema,
+  intakeCursorQuerySchema,
   intakeListEventsQuerySchema,
   intakeLookupQuerySchema,
+  intakeSkipSchema,
 } from '@/http/schemas/intake-schemas';
 
 /**
@@ -61,6 +63,10 @@ export function buildIntakeRouter(
   );
 
   router.get('/events', validate({ query: intakeListEventsQuerySchema }), controller.listEvents);
+
+  // Cursor e descarte/escalada (docs/13, decisão 9): JSON puro, sem multipart.
+  router.get('/cursor', validate({ query: intakeCursorQuerySchema }), controller.cursor);
+  router.post('/events/skip', validate({ body: intakeSkipSchema }), controller.skip);
 
   return router;
 }

@@ -167,6 +167,49 @@ describe('CompanyService', () => {
         service.update(company.id, { organizationId: 'nao-existe' }),
       ).rejects.toBeInstanceOf(NotFoundError);
     });
+
+    // Cadastro pendente (docs/13, decisão 10): empresa criada pelo intake sem documento.
+    it('conclui cadastro pendente definindo o CNPJ (normalizado) e o documentType', async () => {
+      const { service, companyRepository, organizationId } = buildContext();
+      const pending = await companyRepository.create({
+        cnpj: null,
+        documentType: null,
+        legalName: 'casaenovidade.com.br',
+        tradeName: null,
+        organizationId,
+      });
+
+      const updated = await service.update(pending.id, {
+        cnpj: '11.222.333/0001-81',
+        legalName: 'Casa & Novidade LTDA',
+      });
+      expect(updated.cnpj).toBe(VALID_CNPJ);
+      expect(updated.documentType).toBe('CNPJ');
+      expect(updated.legalName).toBe('Casa & Novidade LTDA');
+    });
+
+    it('recusa definir CNPJ já usado por outra empresa e recusa trocar o CNPJ de cadastro completo', async () => {
+      const { service, companyRepository, organizationId } = buildContext();
+      const complete = await service.create({ cnpj: VALID_CNPJ, legalName: 'A', organizationId });
+      const pending = await companyRepository.create({
+        cnpj: null,
+        documentType: null,
+        legalName: 'B',
+        tradeName: null,
+        organizationId,
+      });
+
+      await expect(service.update(pending.id, { cnpj: VALID_CNPJ })).rejects.toMatchObject({
+        code: 'CONFLICT',
+      });
+      await expect(service.update(complete.id, { cnpj: VALID_CNPJ_2 })).rejects.toMatchObject({
+        code: 'COMPANY_DOCUMENT_LOCKED',
+        status: 409,
+      });
+      expect(
+        await service.update(pending.id, { cnpj: '11444777000161', legalName: 'B LTDA' }),
+      ).toMatchObject({ cnpj: VALID_CNPJ_2, documentType: 'CNPJ' });
+    });
   });
 
   describe('delete', () => {

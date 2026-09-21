@@ -119,6 +119,14 @@ container.ts  composição manual de dependências (ver acima)
   suíte usa.
 - **Empresa desconhecida é cadastrada, não rejeitada** (docs/13, decisão 5). Domínio de webmail
   público nunca vira `EmailDomain`; domínio corporativo novo entra com `autoApprove = false`.
+- **Sem CNPJ no e-mail, a empresa vem do domínio do remetente** e, se não existir, nasce em
+  **cadastro pendente** (`companies.cnpj = NULL`, docs/13 decisão 10). `cnpj` é anulável **sem
+  `@unique`** no schema: a unicidade é um índice filtrado em migration manual (docs/04,
+  "Limitações"). Não reintroduzir `@unique` — o Prisma acusaria drift e recriaria a constraint.
+- **A rotina lê a pasta `Intake IA` (cópia, nunca move) a partir de `GET /intake/cursor`** e
+  registra todo e-mail examinado — inclusive os descartados/escalados via
+  `POST /intake/events/skip` (`kind` IGNORED/ESCALATED) — senão o cursor não avança (docs/13,
+  decisão 9). A retentativa de `FAILED` é pela lista `status=FAILED`, não pelo cursor.
 - **`/intake/*` não passa pelo `uploadLimiter`** (30/10 min é para pessoas); usa o limite
   interno de `rateLimitByRole`.
 - `mcp-server/` é um pacote separado (ESM, `@modelcontextprotocol/sdk`), sem regra de negócio:
@@ -239,12 +247,15 @@ verificar as versões reais) assumiam. Onde isso importou, a decisão já foi to
 
 ## Estado do projeto
 
-As 22 tarefas do núcleo e a Fase 7 (Tarefas 23–26, alimentação por IA — chaves de API,
-origem/solicitante/CPF, intake idempotente por e-mail com anexos via Graph, MCP server + prompt do
-agente) estão concluídas. O que falta para o agente rodar de fato é infraestrutura fora do
-repositório: registro de aplicação no Entra ID com `Mail.Read` + `ApplicationAccessPolicy`
-(docs/13, "Configuração"), a API publicada com URL acessível pelo orquestrador, e a tarefa
-agendada do Haiku configurada com o MCP e o prompt de `docs/prompts/agente-email-haiku.md`.
+As 22 tarefas do núcleo e a Fase 7 (Tarefas 23–27, alimentação por IA — chaves de API,
+origem/solicitante/CPF, intake idempotente por e-mail com anexos via Graph, MCP server + prompts,
+pasta de intake por cópia com cursor e empresa pelo domínio/cadastro pendente) estão concluídas.
+A API está publicada em `https://processos.opusce.com.br` (Windows Server, docs/11, scripts em
+`deploy/`), o app do Entra ID tem RBAC for Applications `Application Mail.Read` restrito à caixa
+`opusoperacional@opusce.com.br` (docs/13, "Configuração"), e a rotina agendada do Claude Code
+(plano Max, `docs/prompts/rotina-intake-claude-max.md`) existe em claude.ai/code/routines. O que
+depende de gente: a regra de cópia para a pasta `Intake IA` na caixa (docs/13, decisão 9) e
+completar os cadastros pendentes na tela de empresas.
 
 Backend completo (auth local/social, rate limiting,
 admin, kanban, processos com escopo/movimentação/auditoria, documentos, fila de e-mail, tempo

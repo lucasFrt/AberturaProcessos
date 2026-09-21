@@ -23,7 +23,7 @@ export interface CreateProcessPayload {
 
 export interface CompanySummaryDto {
   id: string;
-  cnpj: string;
+  cnpj: string | null;
   legalName: string;
 }
 

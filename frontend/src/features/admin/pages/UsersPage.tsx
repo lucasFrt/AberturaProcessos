@@ -21,6 +21,7 @@ import { translateError } from '@/shared/api/errors';
 import { Can } from '@/shared/components/Can';
 import { PageHeader } from '@/shared/components/PageHeader';
 import { useDebounce } from '@/shared/hooks/useDebounce';
+import { formatCompanyDocument } from '@/shared/lib/cnpj';
 
 // --- Schema ---
 
@@ -105,7 +106,7 @@ function ApproveModal({ open, user, onClose }: ApproveModalProps): ReactElement 
 
   const companyOptions = (companiesData?.data ?? []).map((c) => ({
     value: c.id,
-    label: `${c.legalName} — ${c.cnpj}`,
+    label: `${c.legalName} — ${formatCompanyDocument(c.cnpj)}`,
   }));
 
   const approveMutation = useMutation({

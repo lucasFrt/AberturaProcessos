@@ -16,7 +16,7 @@ interface DashboardMetricsDto {
     order: number;
     count: number;
   }>;
-  byCompany: Array<{ companyId: string; cnpj: string; legalName: string; count: number }>;
+  byCompany: Array<{ companyId: string; cnpj: string | null; legalName: string; count: number }>;
   byOrganization: Array<{ organizationId: string; name: string; count: number }>;
   completionTime: {
     averageHours: number;

@@ -21,7 +21,12 @@ export class CompanyController {
     try {
       const query = req.query as unknown as ListCompaniesQuery;
       const page = await this.service.list(
-        { q: query.q, organizationId: query.organizationId, isActive: query.isActive },
+        {
+          q: query.q,
+          organizationId: query.organizationId,
+          isActive: query.isActive,
+          pendingRegistration: query.pendingRegistration,
+        },
         { page: query.page, pageSize: query.pageSize },
       );
       res

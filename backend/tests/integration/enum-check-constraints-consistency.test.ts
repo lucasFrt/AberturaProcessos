@@ -3,6 +3,9 @@ import {
   AUTH_PROVIDERS,
   COMPANY_DOCUMENT_TYPES,
   HISTORY_ACTIONS,
+  INTAKE_CHANNELS,
+  INTAKE_EVENT_KINDS,
+  INTAKE_EVENT_STATUSES,
   RECORD_SOURCES,
   ROLES,
   USER_STATUSES,
@@ -116,6 +119,22 @@ describe('Consistência entre domain/enums e as CHECK constraints do banco (inte
   it('CK_documents_source aceita exatamente os valores de RECORD_SOURCES', async () => {
     const allowed = await allowedValuesForConstraint('CK_documents_source');
     expectSameSet(allowed, RECORD_SOURCES, 'CK_documents_source');
+  });
+
+  // Tarefas 25 e 27 (docs/13, decisões 4 e 9).
+  it('CK_intake_events_channel aceita exatamente os valores de INTAKE_CHANNELS', async () => {
+    const allowed = await allowedValuesForConstraint('CK_intake_events_channel');
+    expectSameSet(allowed, INTAKE_CHANNELS, 'CK_intake_events_channel');
+  });
+
+  it('CK_intake_events_kind aceita exatamente os valores de INTAKE_EVENT_KINDS', async () => {
+    const allowed = await allowedValuesForConstraint('CK_intake_events_kind');
+    expectSameSet(allowed, INTAKE_EVENT_KINDS, 'CK_intake_events_kind');
+  });
+
+  it('CK_intake_events_status aceita exatamente os valores de INTAKE_EVENT_STATUSES', async () => {
+    const allowed = await allowedValuesForConstraint('CK_intake_events_status');
+    expectSameSet(allowed, INTAKE_EVENT_STATUSES, 'CK_intake_events_status');
   });
 
   /**

@@ -357,7 +357,8 @@ completo, com o item de WebSocket confirmado na aba Network.
 ## Fase 7 — Alimentação por IA (e-mail → processo)
 
 Contexto e decisões em `docs/13-integracao-ia-email.md`. A entrada de processos passa a ser feita
-por um agente de IA que lê a caixa de e-mail da trading; o operacional segue usando o funil.
+por um agente de IA que lê a caixa de e-mail da trading; o operacional segue usando o funil. A
+Tarefa 27 veio da primeira execução real (volume da caixa e e-mails sem CNPJ).
 
 ### Tarefa 23 — Chaves de API (contas de serviço)
 
@@ -424,6 +425,37 @@ Pacote `mcp-server/` (stdio, `@modelcontextprotocol/sdk`) com as ferramentas `lo
 **Aceite:** `npm run build` no `mcp-server/` gera o binário; `npx @modelcontextprotocol/inspector`
 lista as quatro ferramentas; uma chamada de `create_process_from_email` contra a API local cria o
 processo; o prompt cobre os três desfechos (criado, anexado, escalado).
+
+---
+
+### Tarefa 27 — Pasta de intake por cópia, cursor e empresa pelo domínio
+
+Resultado da primeira execução real da rotina (doc 13, decisões 9 e 10). (a) A IA passa a ler a
+pasta `Intake IA`, alimentada por regra de **cópia** do Outlook (a caixa de entrada não é tocada),
+e sabe onde parou: `GET /intake/cursor` (`receivedAt` do último e-mail examinado) e
+`POST /intake/events/skip` registrando `IGNORED`/`ESCALATED` como `kind` de `IntakeEvent`
+(migration da CHECK constraint + índice `[channel, status, receivedAt]`); `GET /intake/events`
+ganha filtro `kind`. (b) `company.document` passa a ser opcional no intake: sem CNPJ, a empresa é
+resolvida pelo **domínio** do remetente e, se não existir, nasce em **cadastro pendente**
+(`companies.cnpj`/`documentType` anuláveis, índice único filtrado em migration manual);
+`PATCH /companies/:id` aceita `cnpj` só para concluir a pendência; `GET /companies` filtra por
+`pendingRegistration`; o front mostra "Cadastro pendente" e permite completar na edição. MCP ganha
+`get_intake_cursor` e `skip_email`; o prompt da rotina passa a ler só a pasta, a partir do cursor,
+registrando todo e-mail examinado, com retentativa de `FAILED` e descarte de remetentes
+automáticos.
+
+**Refs:** doc 13 (decisões 9 e 10, "Pasta Intake IA e regra de cópia"), doc 05 (seções "Intake" e
+"Empresas"), doc 04 ("Limitações"), `docs/prompts/rotina-intake-claude-max.md`.
+
+**Aceite:** cursor nulo → skip `IGNORED` → cursor aponta para ele; `FAILED` também avança o cursor
+e aparece em `status=FAILED` até ser concluído ou escalado; skip de mensagem já processada responde
+`duplicate: true` sem alterar o evento; e-mail pulado pode ser processado depois (evento reaberto,
+não duplicado); e-mail sem CNPJ de domínio desconhecido cria organização + domínio + empresa
+pendente e o processo; segundo e-mail do mesmo domínio reaproveita a pendente; e-mail posterior com
+CNPJ conclui a pendente; duas pendentes coexistem e CNPJ duplicado continua rejeitado pelo índice;
+`PATCH /companies/:id` com `cnpj` em empresa completa responde `409 COMPANY_DOCUMENT_LOCKED`;
+webmail público sem CNPJ responde `400 COMPANY_REQUIRED`; `prisma migrate diff` contra o banco
+migrado não acusa drift; `npm test` no MCP lista as sete ferramentas.
 
 
 ## Ordem e paralelismo

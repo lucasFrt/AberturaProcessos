@@ -15,7 +15,7 @@ import type { ProcessPermissions } from '@/domain/entities/process-permissions';
 
 interface CompanySummaryDto {
   id: string;
-  cnpj: string;
+  cnpj: string | null;
   legalName: string;
 }
 

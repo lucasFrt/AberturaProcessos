@@ -29,7 +29,7 @@ interface FakeStage {
 
 interface FakeCompany {
   id: string;
-  cnpj: string;
+  cnpj: string | null;
   legalName: string;
 }
 
@@ -72,7 +72,7 @@ export class InMemoryProcessRepository implements ProcessRepository {
     );
   }
 
-  private companySummary(id: string): { id: string; cnpj: string; legalName: string } {
+  private companySummary(id: string): { id: string; cnpj: string | null; legalName: string } {
     const company = this.companies.find((item) => item.id === id);
     return company ?? { id, cnpj: '00000000000000', legalName: 'Empresa desconhecida' };
   }

@@ -4,7 +4,7 @@ import type { DashboardFilters } from '@/domain/entities/dashboard';
 export interface DashboardProcessRow {
   id: string;
   clientCompanyId: string;
-  clientCompanyCnpj: string;
+  clientCompanyCnpj: string | null;
   clientCompanyLegalName: string;
   organizationId: string;
   organizationName: string;

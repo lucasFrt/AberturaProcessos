@@ -78,7 +78,7 @@ export class CompanyService {
     const existing = await this.deps.companyRepository.findByCnpj(cnpj);
     if (existing) {
       return {
-        cnpj: existing.cnpj,
+        cnpj,
         legalName: existing.legalName,
         tradeName: existing.tradeName,
         registrationStatus: null,
@@ -158,7 +158,7 @@ export class CompanyService {
   }
 
   async update(id: string, data: UpdateCompanyData): Promise<Company> {
-    await this.findById(id);
+    const current = await this.findById(id);
 
     if (data.organizationId) {
       const organization = await this.deps.organizationRepository.findById(data.organizationId);
@@ -167,7 +167,26 @@ export class CompanyService {
       }
     }
 
-    return this.deps.companyRepository.update(id, data);
+    // Conclusão de cadastro pendente (docs/13, decisão 10). Trocar o documento
+    // de uma empresa já cadastrada não é permitido: processos e histórico
+    // referenciam a empresa pelo que ela era; corrija criando outra.
+    let documentPatch: Pick<UpdateCompanyData, 'cnpj' | 'documentType'> = {};
+    if (data.cnpj !== undefined) {
+      if (current.cnpj !== null) {
+        throw new ConflictError(
+          'COMPANY_DOCUMENT_LOCKED',
+          'O CNPJ/CPF só pode ser definido em cadastro pendente.',
+        );
+      }
+      const { cnpj, documentType } = this.normalizeAndValidateDocument(data.cnpj);
+      const existing = await this.deps.companyRepository.findByCnpj(cnpj);
+      if (existing && existing.id !== id) {
+        throw new ConflictError('CONFLICT', 'Já existe uma empresa cadastrada com este CNPJ.');
+      }
+      documentPatch = { cnpj, documentType };
+    }
+
+    return this.deps.companyRepository.update(id, { ...data, ...documentPatch });
   }
 
   /**

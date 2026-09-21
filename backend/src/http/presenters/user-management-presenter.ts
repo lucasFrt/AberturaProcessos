@@ -37,7 +37,7 @@ export function presentUser(user: User): UserDto {
 
 interface CompanySummaryDto {
   id: string;
-  cnpj: string;
+  cnpj: string | null;
   legalName: string;
 }
 

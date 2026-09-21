@@ -33,7 +33,8 @@ export interface Process {
 
 export interface CompanySummary {
   id: string;
-  cnpj: string;
+  /** `null` = cadastro pendente (docs/13, decisão 10). */
+  cnpj: string | null;
   legalName: string;
 }
 
