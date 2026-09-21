@@ -11,8 +11,8 @@ Internet/Intranet
 ┌─────────────────────────── IIS ───────────────────────────┐
 │ Site "AberturaProcessos"                                  │
 │  /            -> D:\AberturaProcessos\frontend  (estático) │
-│  /api         -> http://127.0.0.1:3000/api      (ARR)      │
-│  /socket.io   -> http://127.0.0.1:3000/socket.io (ARR + WS)│
+│  /api         -> http://127.0.0.1:3008/api      (ARR)      │
+│  /socket.io   -> http://127.0.0.1:3008/socket.io (ARR + WS)│
 └───────────────────────────────────────────────────────────┘
    │                              │
    ▼                              ▼
@@ -107,7 +107,7 @@ REDIS_KEY_PREFIX=ap
 `REDIS_DB=1` separa o keyspace; `REDIS_KEY_PREFIX=ap` faz as chaves do BullMQ virarem `ap:email:*`
 (a outra aplicação também tem uma fila chamada `email`). Validar com protocolo, não com
 `Test-NetConnection` (o relay do WSL responde na porta mesmo com o Redis parado):
-`Invoke-RestMethod http://127.0.0.1:3000/health/ready` depois de subir a API.
+`Invoke-RestMethod http://127.0.0.1:3008/health/ready` depois de subir a API.
 
 ### Redis via Docker (instalação nova)
 
@@ -164,7 +164,7 @@ para a plataforma — o Prisma tem engine binária específica.
 
 ```dotenv
 NODE_ENV=production
-PORT=3000
+PORT=3008                      # 3000 está ocupada pelo Nexus no servidor atual; o web.config aponta para 3008
 LOG_LEVEL=info
 FRONTEND_URL=https://processos.opusce.com.br
 API_BASE_URL=https://processos.opusce.com.br
@@ -226,7 +226,7 @@ git pull
 cd backend;  npm ci; npm run build; npx prisma migrate deploy
 cd ..\frontend; npm ci; npm run build
 Start-Service AberturaProcessos-API, AberturaProcessos-Worker
-Invoke-RestMethod http://127.0.0.1:3000/health/ready
+Invoke-RestMethod http://127.0.0.1:3008/health/ready
 ```
 
 Backup do banco antes do `migrate deploy` continua obrigatório (seção "Atualização de versão").
@@ -306,13 +306,13 @@ Dependência de serviços — a API não deve subir antes do SQL Server:
         <!-- 1) WebSocket / Socket.IO -->
         <rule name="SocketIO" stopProcessing="true">
           <match url="^socket.io/(.*)" />
-          <action type="Rewrite" url="http://127.0.0.1:3000/socket.io/{R:1}" />
+          <action type="Rewrite" url="http://127.0.0.1:3008/socket.io/{R:1}" />
         </rule>
 
         <!-- 2) API -->
         <rule name="ApiProxy" stopProcessing="true">
           <match url="^api/(.*)" />
-          <action type="Rewrite" url="http://127.0.0.1:3000/api/{R:1}" />
+          <action type="Rewrite" url="http://127.0.0.1:3008/api/{R:1}" />
           <serverVariables>
             <set name="HTTP_X_FORWARDED_PROTO" value="https" />
           </serverVariables>
@@ -407,13 +407,13 @@ controle de escopo.
 
 ## Firewall
 
-Somente 443 (e 80 apenas para redirecionar para 443) exposto. 3000, 1433 e 6379 permanecem restritos
+Somente 443 (e 80 apenas para redirecionar para 443) exposto. 3008, 1433 e 6379 permanecem restritos
 ao loopback:
 
 ```powershell
 New-NetFirewallRule -DisplayName "AP - HTTPS" -Direction Inbound -Protocol TCP -LocalPort 443 -Action Allow
 New-NetFirewallRule -DisplayName "AP - HTTP redirect" -Direction Inbound -Protocol TCP -LocalPort 80 -Action Allow
-New-NetFirewallRule -DisplayName "AP - Bloqueia API externa" -Direction Inbound -Protocol TCP -LocalPort 3000 -RemoteAddress Any -Action Block
+New-NetFirewallRule -DisplayName "AP - Bloqueia API externa" -Direction Inbound -Protocol TCP -LocalPort 3008 -RemoteAddress Any -Action Block
 ```
 
 O Node deve escutar em `127.0.0.1` (não em `0.0.0.0`), o que dispensa depender apenas do firewall:
@@ -423,8 +423,8 @@ O Node deve escutar em `127.0.0.1` (não em `0.0.0.0`), o que dispensa depender 
 
 ```powershell
 Get-Service AberturaProcessos-*                            # ambos Running
-Invoke-RestMethod http://127.0.0.1:3000/health             # status ok
-Invoke-RestMethod http://127.0.0.1:3000/health/ready       # db e redis ok
+Invoke-RestMethod http://127.0.0.1:3008/health             # status ok
+Invoke-RestMethod http://127.0.0.1:3008/health/ready       # db e redis ok
 Invoke-RestMethod https://processos.opusce.com.br/api/v1/health   # proxy do IIS funcionando
 docker ps                                                  # ap-redis Up
 ```
@@ -460,7 +460,7 @@ npx prisma migrate deploy
 
 Start-Service AberturaProcessos-API
 Start-Service AberturaProcessos-Worker
-Invoke-RestMethod http://127.0.0.1:3000/health/ready
+Invoke-RestMethod http://127.0.0.1:3008/health/ready
 ```
 
 Parar o worker primeiro evita que ele processe um job com código antigo enquanto o schema já mudou.
