@@ -213,18 +213,26 @@ automaticamente, venham de quem vierem. Daí três regras:
    identificadores que o e-mail trouxe e ainda não constam na `reference` são acrescentados a ela
    (com `PROCESS_UPDATED` no histórico). O HBL que aparece pela primeira vez no pré-alerta do agente
    é o que fará o "original HBL" do armador, dias depois, encontrar o mesmo processo.
-3. **Se o processo ainda não existe, o documento o cria.** O agente abre o processo a partir do
-   primeiro documento, com os identificadores e o cliente que o e-mail traz. Quando quem escreve é
-   um terceiro, `company.senderIsClient = false` e o cliente é identificado **pelo nome** citado
-   (`Cnee: PROMEDON`, `FU XING COMERCIO`): empresa existente com esse nome → usa; nenhuma →
-   organização e empresa pendentes com esse nome, **sem domínio** (o domínio do remetente é do
-   agente e não pode virar o cadastro do cliente). Não dá para identificar o cliente → escala.
+3. **Um processo = um embarque = um BL, e processo só nasce a pedido do cliente.** Quem abre
+   processo é o cliente (importador/exportador), pedindo abertura ou mandando "os documentos do
+   processo X" de um embarque novo. Documento de terceiro só entra em processo que **já existe**
+   e do **mesmo embarque** (mesmo BL, ou mesmo número de processo com o mesmo cliente); um e-mail
+   com documentos de vários embarques não é documento de processo nenhum (escala). Sem processo, o
+   agente **não cria e não anexa**: registra `IGNORED` com motivo `sem processo para
+   <identificadores>`, e o relatório lista esses casos num bloco próprio ("Documentos sem
+   processo") para alguém criar o processo pelo front — a partir daí os próximos documentos entram
+   sozinhos. Foi decisão da operação (21/09): um documento avulso sem processo "não tem como
+   anexar"; melhor um bloco no relatório do que processos criados a partir de documento de agente.
 
-A regra 3 é uma decisão de produto: prefere um processo pendente de revisão a um documento perdido.
-Se a operação preferir que documento de terceiro sem processo só escale, é uma linha no prompt.
-Consequência prática: processos criados por terceiros nascem com o cliente em cadastro pendente e a
-referência do parceiro — o operacional completa o CNPJ e, se quiser, ajusta a referência; os
-próximos documentos já chegam no lugar certo.
+`company.senderIsClient = false` continua existindo na API (cliente resolvido pelo nome citado,
+pendente sem domínio) para o caso de a operação um dia querer criação a partir de terceiro; o
+prompt atual não o usa. O que já era verdade continua: o documento que chega **depois** do
+processo aberto — o BL original semanas depois, a minuta, o boleto — cai no processo pela
+referência, e cada um acrescenta os identificadores que trouxer.
+
+Um "guarda-volumes" de documentos sem processo (anexar automaticamente quando o processo com
+aquele identificador for criado) é a evolução natural; hoje o rastro é o `IntakeEvent` `IGNORED` com
+o motivo, e o e-mail original continua na caixa.
 
 ## Fluxo de uma execução do agente
 

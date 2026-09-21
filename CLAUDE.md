@@ -131,10 +131,12 @@ container.ts  composição manual de dependências (ver acima)
   vira `IntakeEvent` `IGNORED`/`ESCALATED` via `POST /intake/events/skip`, com o motivo (docs/13,
   decisão 9). A retentativa de `FAILED` é pela lista `status=FAILED`, não pelo cursor. Nada de
   pasta, regra ou categoria no Outlook — a caixa em uso não é tocada.
-- **Documento de embarque de qualquer remetente externo vai para o processo** (docs/13, decisão
-  11): `addReferences` em `/intake/attachments` acrescenta identificadores à `reference`;
-  `company.senderIsClient=false` resolve o cliente pelo nome citado (pendente sem domínio se não
-  existir); se o processo não existe, a IA o cria a partir do documento.
+- **Documento de embarque de qualquer remetente externo vai para o processo que já existe** (docs/13,
+  decisão 11): `addReferences` em `/intake/attachments` acrescenta identificadores à `reference`.
+  Um processo = um embarque = um BL; processo só nasce a pedido do cliente — documento sem processo
+  vira `IGNORED` com motivo `sem processo para ...` (bloco próprio no relatório), nunca cria.
+  `company.senderIsClient=false` (cliente pelo nome citado, pendente sem domínio) existe na API mas
+  o prompt não o usa.
 - **`/intake/*` não passa pelo `uploadLimiter`** (30/10 min é para pessoas); usa o limite
   interno de `rateLimitByRole`.
 - `mcp-server/` é um pacote separado (ESM, `@modelcontextprotocol/sdk`), sem regra de negócio:
