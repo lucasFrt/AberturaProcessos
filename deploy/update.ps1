@@ -9,13 +9,17 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$RepoDir = (Split-Path -Parent $PSScriptRoot),
+  [string]$RepoDir,
   [switch]$SkipPull,
   [switch]$SkipBackup
 )
 
 $ErrorActionPreference = 'Stop'
 function Write-Step([string]$Message) { Write-Host "==> $Message" -ForegroundColor Cyan }
+
+# $PSScriptRoot fica vazio no default de parâmetro no PS 5.1; resolvido aqui no corpo.
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+if (-not $RepoDir) { $RepoDir = Split-Path -Parent $scriptDir }
 
 $RepoDir = (Resolve-Path $RepoDir).Path
 $backend = Join-Path $RepoDir 'backend'

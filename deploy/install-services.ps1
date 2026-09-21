@@ -18,8 +18,8 @@
 #>
 [CmdletBinding()]
 param(
-  # Pasta backend\ do clone. Padrão: a pasta backend ao lado deste script.
-  [string]$BackendDir = (Join-Path (Split-Path -Parent $PSScriptRoot) 'backend'),
+  # Pasta backend\ do clone. Padrão: a pasta backend ao lado da pasta deste script.
+  [string]$BackendDir,
   # Raiz de dados fora do clone (uploads\ e logs\). Padrão: D:\AberturaProcessos, ou C:\ se não houver D:.
   [string]$DataRoot = $(if (Test-Path 'D:\') { 'D:\AberturaProcessos' } else { 'C:\AberturaProcessos' }),
   [string]$NssmPath = 'C:\Tools\nssm\nssm.exe',
@@ -29,6 +29,10 @@ param(
 $ErrorActionPreference = 'Stop'
 
 function Write-Step([string]$Message) { Write-Host "==> $Message" -ForegroundColor Cyan }
+
+# $PSScriptRoot fica vazio no default de parâmetro no PS 5.1; resolvido aqui no corpo.
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+if (-not $BackendDir) { $BackendDir = Join-Path (Split-Path -Parent $scriptDir) 'backend' }
 
 # ── Pré-checagens ────────────────────────────────────────────────────
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
