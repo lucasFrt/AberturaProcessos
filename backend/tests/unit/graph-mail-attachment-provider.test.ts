@@ -202,6 +202,104 @@ describe('GraphMailAttachmentProvider', () => {
     ).toEqual({ kind: 'MESSAGE_NOT_FOUND' });
   });
 
+  it('listMessages consulta a Inbox a partir de after, mais antigos primeiro, com $select enxuto', async () => {
+    const listUrl =
+      'https://graph.test/v1.0/users/processos%40opusce.com.br/mailFolders/inbox/messages';
+    const { provider, calls } = buildProvider({
+      [TOKEN_URL]: () => jsonResponse({ access_token: 'tok', expires_in: 3600 }),
+      [listUrl]: () =>
+        jsonResponse({
+          '@odata.nextLink': 'https://graph.test/next',
+          value: [
+            {
+              id: 'm1',
+              internetMessageId: '<a@b>',
+              subject: 'Novo Processo - 230/26',
+              from: {
+                emailAddress: { name: 'Gabriel', address: 'Importacao@CasaeNovidade.com.br' },
+              },
+              receivedDateTime: '2026-09-21T15:33:40Z',
+              hasAttachments: true,
+              bodyPreview: 'Segue em anexo',
+            },
+            { id: 'sem-data' },
+          ],
+        }),
+    });
+
+    const outcome = await provider.listMessages({
+      after: new Date('2026-09-21T15:00:00.000Z'),
+      limit: 25,
+    });
+    expect(outcome).toEqual({
+      kind: 'OK',
+      hasMore: true,
+      messages: [
+        {
+          id: 'm1',
+          internetMessageId: '<a@b>',
+          subject: 'Novo Processo - 230/26',
+          from: { name: 'Gabriel', email: 'importacao@casaenovidade.com.br' },
+          receivedAt: new Date('2026-09-21T15:33:40.000Z'),
+          hasAttachments: true,
+          preview: 'Segue em anexo',
+        },
+      ],
+    });
+    const url = calls.find((call) => call.startsWith(listUrl)) ?? '';
+    expect(url).toContain(encodeURIComponent('receivedDateTime gt 2026-09-21T15:00:00.000Z'));
+    expect(url).toContain('$orderby=receivedDateTime%20asc');
+    expect(url).toContain('$top=25');
+  });
+
+  it('getMessage pede o corpo em texto e os anexos; 404 vira MESSAGE_NOT_FOUND', async () => {
+    const messageUrl = 'https://graph.test/v1.0/users/processos%40opusce.com.br/messages/m1';
+    let preferHeader: string | undefined;
+    const { provider } = buildProvider({
+      [TOKEN_URL]: () => jsonResponse({ access_token: 'tok', expires_in: 3600 }),
+      [`${messageUrl}/attachments`]: () =>
+        jsonResponse({
+          value: [
+            {
+              '@odata.type': '#microsoft.graph.fileAttachment',
+              id: 'a1',
+              name: 'HBL.pdf',
+              contentType: 'application/pdf',
+              size: 1234,
+              isInline: false,
+            },
+          ],
+        }),
+      [messageUrl]: (init) => {
+        preferHeader = (init?.headers as Record<string, string> | undefined)?.Prefer;
+        return jsonResponse({
+          id: 'm1',
+          subject: 'PRE ALERT',
+          from: { emailAddress: { name: 'Isabela', address: 'op3@cilagency.com.br' } },
+          toRecipients: [{ emailAddress: { address: 'Operacional@opusce.com.br' } }],
+          ccRecipients: [],
+          receivedDateTime: '2026-09-21T16:56:00Z',
+          hasAttachments: true,
+          body: { contentType: 'text', content: 'Segue em anexo original HBL!' },
+        });
+      },
+      'https://graph.test/v1.0/users/processos%40opusce.com.br/messages/nope': () =>
+        new Response('', { status: 404 }),
+    });
+
+    const outcome = await provider.getMessage('m1');
+    expect(preferHeader).toBe('outlook.body-content-type="text"');
+    expect(outcome.kind).toBe('OK');
+    if (outcome.kind === 'OK') {
+      expect(outcome.message.bodyText).toBe('Segue em anexo original HBL!');
+      expect(outcome.message.to).toEqual(['operacional@opusce.com.br']);
+      expect(outcome.message.attachments).toEqual([
+        { name: 'HBL.pdf', mimeType: 'application/pdf', size: 1234, isInline: false },
+      ]);
+    }
+    expect(await provider.getMessage('nope')).toEqual({ kind: 'MESSAGE_NOT_FOUND' });
+  });
+
   it('anexo sem contentType recebe application/octet-stream', async () => {
     const { provider } = buildProvider({
       [TOKEN_URL]: () => jsonResponse({ access_token: 'tok', expires_in: 3600 }),

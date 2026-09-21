@@ -413,6 +413,33 @@ describe('Intake por e-mail — integração (docs/13)', () => {
       return response.body as { id: string; code: string };
     }
 
+    it('addReferences acrescenta identificadores novos à referência do processo', async () => {
+      const seeded = await seedProcess('230/26');
+      const response = await request(app)
+        .post(`${INTAKE_BASE}/attachments`)
+        .set('X-Api-Key', apiKey)
+        .send({
+          source: {
+            channel: 'EMAIL',
+            externalId: 'msg-ref-1',
+            receivedAt: '2026-09-21T16:00:00.000Z',
+          },
+          requester: { email: 'op3@cilagency.com.br', name: 'Isabela' },
+          processRef: '230/26',
+          note: 'HBL original em anexo.',
+          addReferences: ['NBZY26071470', '230/26'],
+        });
+      expect(response.status).toBe(201);
+      expect((response.body as IntakeResultBody).process.reference).toBe('230/26 / NBZY26071470');
+
+      const lookup = await request(app)
+        .get(`${INTAKE_BASE}/processes/lookup`)
+        .set('X-Api-Key', apiKey)
+        .query({ ref: 'NBZY26071470' });
+      const matches = (lookup.body as { matches: Array<{ process: { id: string } }> }).matches;
+      expect(matches[0]?.process.id).toBe(seeded.id);
+    });
+
     it('"Processo <código>" anexa documento e nota ao processo certo', async () => {
       const process = await seedProcess('IMP-2026-0042');
 
@@ -721,6 +748,26 @@ describe('Intake por e-mail — integração (docs/13)', () => {
         .query({ kind: 'ESCALATED' });
       const list = escalatedList.body as { data: Array<{ externalId: string }> };
       expect(list.data.map((item) => item.externalId)).toEqual(['msg-skip-2']);
+    });
+
+    it('GET /intake/mailbox/* responde 503 MAIL_READ_DISABLED com o Graph desligado; query inválida responde 400', async () => {
+      const list = await request(app)
+        .get(`${INTAKE_BASE}/mailbox/messages`)
+        .set('X-Api-Key', apiKey)
+        .query({ after: '2026-09-21T12:00:00.000Z', exclude: '@opusce.com.br,noreply' });
+      expect(list.status).toBe(503);
+      expect((list.body as ErrorBody).error.code).toBe('MAIL_READ_DISABLED');
+
+      const detail = await request(app)
+        .get(`${INTAKE_BASE}/mailbox/messages/AAMk123=`)
+        .set('X-Api-Key', apiKey);
+      expect(detail.status).toBe(503);
+
+      const invalid = await request(app)
+        .get(`${INTAKE_BASE}/mailbox/messages`)
+        .set('X-Api-Key', apiKey)
+        .query({ after: 'ontem' });
+      expect(invalid.status).toBe(400);
     });
 
     it('skip sem motivo ou com outcome inválido responde 400', async () => {

@@ -40,7 +40,7 @@ Base: `/api/v1`. Todo corpo de requisição e resposta é `application/json`, ex
 | 400 | `VALIDATION_ERROR` | Falha de schema Zod. `details` lista os campos. |
 | 400 | `INVALID_CNPJ` | CNPJ (14 dígitos) com dígitos verificadores inválidos. |
 | 400 | `INVALID_CPF` | CPF (11 dígitos) com dígitos verificadores inválidos. |
-| 400 | `COMPANY_REQUIRED` | Intake: e-mail sem CNPJ/CPF e remetente sem domínio corporativo (webmail público) — não há como identificar a empresa. |
+| 400 | `COMPANY_REQUIRED` | Intake: e-mail sem CNPJ/CPF e sem como identificar a empresa (remetente de webmail público, ou remetente terceiro sem `company.name`). |
 | 401 | `UNAUTHENTICATED` | Sem token, token expirado ou inválido. |
 | 401 | `INVALID_CREDENTIALS` | E-mail ou senha incorretos. |
 | 403 | `FORBIDDEN` | Autenticado, porém sem papel/permissão para a ação. |
@@ -49,7 +49,7 @@ Base: `/api/v1`. Todo corpo de requisição e resposta é `application/json`, ex
 | 404 | `NOT_FOUND` | Recurso inexistente **ou** fora do escopo de acesso (ver RNF-01). |
 | 404 | `CNPJ_NOT_FOUND` | CNPJ válido, mas inexistente na base da Receita (`GET /companies/lookup/:cnpj`). |
 | 404 | `PROCESS_REF_NOT_FOUND` | Intake: nenhum processo com o código/referência citado. `details.candidates` traz parciais. |
-| 404 | `MAIL_MESSAGE_NOT_FOUND` | Intake: `source.externalId` não existe na caixa configurada. |
+| 404 | `MAIL_MESSAGE_NOT_FOUND` | Intake: o id da mensagem não existe na caixa configurada. |
 | 409 | `CONFLICT` | Violação de unicidade ou de regra de estado. |
 | 409 | `STAGE_NOT_EMPTY` | Exclusão de etapa que ainda contém processos ativos. |
 | 409 | `PROCESS_REF_AMBIGUOUS` | Intake: mais de um processo com a referência citada. `details.candidates` lista-os. |
@@ -60,6 +60,8 @@ Base: `/api/v1`. Todo corpo de requisição e resposta é `application/json`, ex
 | 413 | `PAYLOAD_TOO_LARGE` | Upload acima de `MAX_UPLOAD_SIZE_MB`. |
 | 429 | `RATE_LIMIT_EXCEEDED` | Limite atingido. Header `Retry-After` presente. |
 | 429 | `CNPJ_LOOKUP_RATE_LIMITED` | Cota do provedor externo de consulta de CNPJ estourada. |
+| 503 | `MAIL_READ_DISABLED` | Intake: `/intake/mailbox/*` com `GRAPH_INTAKE_ENABLED=false`. |
+| 503 | `MAIL_UNAVAILABLE` | Intake: o Microsoft Graph não respondeu à listagem/leitura da caixa. |
 | 500 | `INTERNAL_ERROR` | Falha não prevista. Nunca expõe stack trace. |
 | 503 | `CNPJ_LOOKUP_UNAVAILABLE` | Provedor de consulta de CNPJ fora do ar, em timeout ou fora do contrato. |
 | 503 | `CNPJ_LOOKUP_DISABLED` | Consulta de CNPJ desligada por configuração (`CNPJ_LOOKUP_ENABLED=false`). |
@@ -562,6 +564,12 @@ Abre um processo a partir de um e-mail (docs/13, decisões 3 a 5).
   `details.candidates`; nenhuma (organização sem empresa ou domínio corporativo nunca visto) → cria
   a empresa em **cadastro pendente** (`cnpj: null`, nome = `company.name` ou o domínio) e abre o
   processo mesmo assim; webmail público → `400 COMPANY_REQUIRED`.
+- `company.senderIsClient: false` (docs/13, decisão 11) diz que quem escreveu **não** é o cliente
+  (agente de carga, armador, terminal, despachante). Sem `document`, a empresa é então resolvida
+  só por `company.name` (obrigatório): uma empresa cujo nome contém o texto → usa; várias →
+  `409 COMPANY_AMBIGUOUS`; nenhuma → organização + empresa pendentes com esse nome, **sem
+  registrar domínio nenhum** (o domínio do remetente é do terceiro). `requester` continua sendo
+  quem escreveu.
 - `fetchAttachments: true` faz o servidor baixar os anexos da mensagem pelo Graph (`GRAPH_*`).
   Anexos inline (assinaturas) são ignorados; acima de `MAX_UPLOAD_SIZE_MB` são pulados com aviso.
 
@@ -612,6 +620,13 @@ Resposta: mesmo envelope de `POST /intake/processes` (`event.kind = "ATTACHMENT"
 agente responde a um 409 escolhendo um `processId`, ou reclassifica um 404 como processo novo: o
 evento passa a refletir a tentativa atual (`kind`, `externalId`).
 
+- `addReferences` (opcional, até 10 itens de 3–100 caracteres): identificadores do embarque que
+  este e-mail revelou (HBL, contêiner, número do agente, PO...). Os que ainda não constam na
+  `reference` do processo são acrescentados a ela (` / ` como separador, até 255 caracteres — o que
+  não couber vira aviso), gerando `PROCESS_UPDATED` no histórico. É o que faz o próximo documento do
+  mesmo embarque, vindo de outro remetente com outro número, encontrar o processo pelo `lookup`
+  (docs/13, decisão 11). Com `addReferences`, a chamada é válida mesmo sem arquivos e sem `note`.
+
 ### `GET /intake/processes/lookup`
 
 Candidatos para o agente conferir antes de decidir entre abrir e complementar. Query: `ref`
@@ -631,6 +646,33 @@ Eventos de intake, mais recentes primeiro. Filtros: `externalId`, `internetMessa
 `processId`, paginação padrão. Serve para o agente checar se uma mensagem já foi processada
 (`externalId`) antes de gastar trabalho, listar retentativas pendentes (`status=FAILED`), e para o
 operacional auditar o que a IA fez (`kind=ESCALATED` = o que ficou para uma pessoa).
+
+### `GET /intake/mailbox/messages`
+
+Caixa de entrada lida **pelo servidor** (Microsoft Graph, credenciais de aplicação — docs/13,
+decisão 9), do mais antigo para o mais novo. Query: `after` (ISO, obrigatório, exclusivo), `limit`
+(padrão 50, máx. 100), `exclude` (termos separados por vírgula; e-mails cujo remetente — endereço
+ou nome — contenha um deles são descartados no servidor, sem diferenciar maiúsculas).
+
+```json
+{
+  "messages": [ { "id": "AAMkAGI2...", "internetMessageId": "<abc@x.com>", "subject": "Novo Processo - 230/26", "from": { "name": "Gabriel | Casa & Novidade", "email": "importacao@casaenovidade.com.br" }, "receivedAt": "2026-09-21T15:33:40.000Z", "hasAttachments": true, "preview": "Boa tarde, Segue em anexo os documentos do processo: 230/26" } ],
+  "listed": 50, "blocked": 41, "nextAfter": "2026-09-21T16:05:12.000Z", "hasMore": true
+}
+```
+
+`listed` é quantas o Graph devolveu; `blocked` quantas o filtro descartou; `nextAfter` é o
+`receivedAt` da **última listada, bloqueada ou não** — é o valor a gravar em `PUT /intake/cursor` ao
+terminar a página; `hasMore` diz se há mais depois dela. Erros: `503 MAIL_READ_DISABLED`
+(`GRAPH_INTAKE_ENABLED=false`), `503 MAIL_UNAVAILABLE`.
+
+### `GET /intake/mailbox/messages/:id`
+
+Detalhe de uma mensagem: remetente, `to`/`cc`, `receivedAt`, `internetMessageId`, anexos (nome,
+tipo, tamanho — sem os inline) e `bodyText`: o corpo em **texto**, sem o histórico citado (corte no
+primeiro `De:`/`From:`/`-----Mensagem original-----`/separador do Outlook/`Em ... escreveu:` que
+tenha texto antes) e limitado a `maxChars` (query, padrão 6000, máx. 50000; `bodyTruncated: true`
+quando cortou). Erros: `404 MAIL_MESSAGE_NOT_FOUND`, `503 MAIL_READ_DISABLED`, `503 MAIL_UNAVAILABLE`.
 
 ### `GET /intake/cursor`
 

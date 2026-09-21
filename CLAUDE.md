@@ -123,12 +123,18 @@ container.ts  composição manual de dependências (ver acima)
   **cadastro pendente** (`companies.cnpj = NULL`, docs/13 decisão 10). `cnpj` é anulável **sem
   `@unique`** no schema: a unicidade é um índice filtrado em migration manual (docs/04,
   "Limitações"). Não reintroduzir `@unique` — o Prisma acusaria drift e recriaria a constraint.
-- **A rotina lê a caixa de entrada a partir de `GET /intake/cursor` e grava `PUT /intake/cursor`
-  ao fim de cada página** (ponteiro por canal em `intake_cursors`, só anda para a frente).
-  Remetentes bloqueados (lista no prompt) são descartados na listagem sem evento; o que a IA leu e
-  não processou vira `IntakeEvent` `IGNORED`/`ESCALATED` via `POST /intake/events/skip`, com o
-  motivo (docs/13, decisão 9). A retentativa de `FAILED` é pela lista `status=FAILED`, não pelo
-  cursor. Nada de pasta, regra ou categoria no Outlook — a caixa em uso não é tocada.
+- **A caixa é lida pelo servidor** (`GET /intake/mailbox/messages` + `/:id`, Graph app-only, o
+  mesmo provider dos anexos — `MailboxReader` no domínio), não pelo conector: lista enxuta desde
+  `after`, remetentes de `exclude` descartados no servidor (a lista mora no prompt), corpo em
+  texto sem histórico citado. A rotina grava `PUT /intake/cursor` com o `nextAfter` de cada página
+  (ponteiro por canal em `intake_cursors`, só anda para a frente). O que a IA leu e não processou
+  vira `IntakeEvent` `IGNORED`/`ESCALATED` via `POST /intake/events/skip`, com o motivo (docs/13,
+  decisão 9). A retentativa de `FAILED` é pela lista `status=FAILED`, não pelo cursor. Nada de
+  pasta, regra ou categoria no Outlook — a caixa em uso não é tocada.
+- **Documento de embarque de qualquer remetente externo vai para o processo** (docs/13, decisão
+  11): `addReferences` em `/intake/attachments` acrescenta identificadores à `reference`;
+  `company.senderIsClient=false` resolve o cliente pelo nome citado (pendente sem domínio se não
+  existir); se o processo não existe, a IA o cria a partir do documento.
 - **`/intake/*` não passa pelo `uploadLimiter`** (30/10 min é para pessoas); usa o limite
   interno de `rateLimitByRole`.
 - `mcp-server/` é um pacote separado (ESM, `@modelcontextprotocol/sdk`), sem regra de negócio:
@@ -249,9 +255,10 @@ verificar as versões reais) assumiam. Onde isso importou, a decisão já foi to
 
 ## Estado do projeto
 
-As 22 tarefas do núcleo e a Fase 7 (Tarefas 23–27, alimentação por IA — chaves de API,
+As 22 tarefas do núcleo e a Fase 7 (Tarefas 23–28, alimentação por IA — chaves de API,
 origem/solicitante/CPF, intake idempotente por e-mail com anexos via Graph, MCP server + prompts,
-pasta de intake por cópia com cursor e empresa pelo domínio/cadastro pendente) estão concluídas.
+cursor gravado e empresa pelo domínio/cadastro pendente, caixa lida pelo servidor e documentos de
+qualquer parceiro) estão concluídas.
 A API está publicada em `https://processos.opusce.com.br` (Windows Server, docs/11, scripts em
 `deploy/`), o app do Entra ID tem RBAC for Applications `Application Mail.Read` restrito à caixa
 `opusoperacional@opusce.com.br` (docs/13, "Configuração"), e a rotina agendada do Claude Code

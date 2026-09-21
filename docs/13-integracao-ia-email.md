@@ -130,20 +130,28 @@ primeira execução real mostrou: 240 e-mails em 3 h). E qualquer arranjo que de
 na caixa (pasta, regra, categoria) foi descartado: a caixa é usada o dia inteiro pelo operacional e
 não pode ganhar ruído nem tarefa nova.
 
-O desenho final tem três partes, todas do lado da IA e da API:
+O desenho final tem quatro partes, todas do lado da IA e da API:
 
-1. **Remetentes bloqueados no prompt.** O agente vê remetente, assunto e prévia na listagem do
-   conector; e-mails de remetentes da lista (`followupopus`, `multiterminais`, `noreply`... e
-   **todo e-mail interno `@opusce.com.br`** — a IA só abre processo a pedido de cliente) são
-   descartados ali mesmo — sem abrir o corpo, sem chamada à API, sem evento. A lista mora no prompt
-   da rotina (e na cópia em `docs/prompts/`), editável sem deploy.
-2. **Cursor gravado na API.** `GET /intake/cursor` diz de onde continuar; ao terminar cada página
-   de 25 da busca (`order: oldest`), o agente grava `PUT /intake/cursor` com o `receivedAt` do
-   último e-mail da página — bloqueado ou não. A próxima execução começa dali (menos 1 minuto de
+1. **A caixa é lida pelo servidor, não pelo conector.** A primeira execução com Haiku mostrou o
+   limite do conector: a listagem traz ~2 KB por e-mail (vinte destinatários, prévia, links) e o
+   corpo vem em HTML com todo o histórico citado (um só e-mail: 68 mil caracteres) — a execução
+   estoura a memória em poucas páginas e o modelo "encerra" antes de terminar (3 de 14 páginas). O
+   backend já tem acesso à caixa pelo Graph (é como baixa os anexos), então passou a expor
+   `GET /intake/mailbox/messages` (lista enxuta desde `after`, ~300 bytes por e-mail) e
+   `GET /intake/mailbox/messages/:id` (corpo em texto, sem histórico citado, limitado a 6 mil
+   caracteres, com a lista de anexos). O conector Microsoft 365 fica só para o relatório.
+2. **Remetentes bloqueados no prompt, aplicados no servidor.** A lista (`followupopus`,
+   `multiterminais`, `noreply`... e **todo e-mail interno `@opusce.com.br`** — a IA só trabalha
+   com e-mail de fora) mora no prompt da rotina (e na cópia em `docs/prompts/`), editável sem
+   deploy; a rotina a envia no parâmetro `exclude` da listagem e esses e-mails nem chegam ao
+   modelo. `blocked` na resposta diz quantos foram.
+3. **Cursor gravado na API.** `GET /intake/cursor` diz de onde continuar; ao terminar cada página, o
+   agente grava `PUT /intake/cursor` com o `nextAfter` que a listagem devolveu — o `receivedAt` da
+   última mensagem listada, bloqueada ou não. A próxima execução começa dali (menos 1 minuto de
    folga; a checagem de `externalId` cobre a borda). O ponteiro só anda para a frente; uma execução
    atrasada não regride o cursor. Sem ponteiro gravado, a API deduz o cursor do último `IntakeEvent`
    `COMPLETED`/`FAILED` — é o ponto de partida.
-3. **Eventos `IGNORED`/`ESCALATED` para o que foi lido.** Todo e-mail que o agente **leu** e não
+4. **Eventos `IGNORED`/`ESCALATED` para o que foi lido.** Todo e-mail que o agente **leu** e não
    processou entra por `POST /intake/events/skip` com o motivo: é a auditoria do que a IA decidiu
    ("por que não abriu esse?"), no mesmo lugar dos processos criados. Ruído bloqueado não entra —
    seria volume sem informação.
@@ -153,8 +161,9 @@ tentativa; falhou de novo → `skip` com `ESCALATED`), não a releitura pelo cur
 que falha sempre travaria a fila atrás dele.
 
 Não há teto de e-mails por execução: o modelo é o Haiku 4.5 (barato e rápido) e a rotina pagina
-até esgotar o que chegou desde o cursor. A única salvaguarda é de tempo (40 min → grava o cursor
-da última página completa e para). Se a cota do Max apertar, o próximo passo é o plano de API.
+(50 por página) até a listagem responder `hasMore: false`. A única salvaguarda é de tempo (40 min
+→ grava o cursor da última página completa e para). Se a cota do Max apertar, o próximo passo é o
+plano de API.
 
 A alternativa "pasta `Intake IA` alimentada por regra de cópia do Outlook" (filtrar o ruído antes
 da IA, sem mexer na caixa de entrada) continua válida e o backend não a impede — o cursor funciona
@@ -186,6 +195,36 @@ No banco, `companies.cnpj` passa a aceitar `NULL` com um índice único **filtra
 índice único comum, e o Prisma não expressa filtro, por isso o `@unique` saiu do schema e a
 unicidade vive só no índice. A listagem `GET /companies?pendingRegistration=true` é a fila de
 pendências do ADMIN.
+
+### 11. Documento de embarque vem de qualquer parceiro — e o processo acumula todos
+
+Os prints da caixa real mostram o que é a alimentação de verdade: a commercial invoice final vem do
+cliente, o HBL original vem do agente de carga (CIL Agency), a minuta de armazenagem vem do
+terminal, o boleto do despachante, o pré-alerta do armador. O BL original costuma chegar semanas
+depois da abertura. O processo no sistema só serve se **todos** esses documentos forem parar nele,
+automaticamente, venham de quem vierem. Daí três regras:
+
+1. **Documento de embarque de qualquer remetente externo é COMPLEMENTO** do processo que os
+   identificadores apontarem (número do processo/embarque, HBL/MBL, contêiner, pedido/PO, DUIMP,
+   CE). O agente procura pelo mais específico primeiro; o `lookup` casa código e referência exatos
+   e, em `PARTIAL`, "contém" — por isso a `reference` do processo guarda **todos** os
+   identificadores conhecidos, separados por ` / `.
+2. **Cada documento ensina a referência.** `POST /intake/attachments` aceita `addReferences`: os
+   identificadores que o e-mail trouxe e ainda não constam na `reference` são acrescentados a ela
+   (com `PROCESS_UPDATED` no histórico). O HBL que aparece pela primeira vez no pré-alerta do agente
+   é o que fará o "original HBL" do armador, dias depois, encontrar o mesmo processo.
+3. **Se o processo ainda não existe, o documento o cria.** O agente abre o processo a partir do
+   primeiro documento, com os identificadores e o cliente que o e-mail traz. Quando quem escreve é
+   um terceiro, `company.senderIsClient = false` e o cliente é identificado **pelo nome** citado
+   (`Cnee: PROMEDON`, `FU XING COMERCIO`): empresa existente com esse nome → usa; nenhuma →
+   organização e empresa pendentes com esse nome, **sem domínio** (o domínio do remetente é do
+   agente e não pode virar o cadastro do cliente). Não dá para identificar o cliente → escala.
+
+A regra 3 é uma decisão de produto: prefere um processo pendente de revisão a um documento perdido.
+Se a operação preferir que documento de terceiro sem processo só escale, é uma linha no prompt.
+Consequência prática: processos criados por terceiros nascem com o cliente em cadastro pendente e a
+referência do parceiro — o operacional completa o CNPJ e, se quiser, ajusta a referência; os
+próximos documentos já chegam no lugar certo.
 
 ## Fluxo de uma execução do agente
 
@@ -241,6 +280,8 @@ Detalhe completo em `docs/05-contrato-api.md`, seção "Intake (alimentação po
 | `POST` | `/intake/processes` | OPERATIONAL, ADMIN | Abre processo a partir de um e-mail (JSON ou multipart com `payload` + `files`). |
 | `POST` | `/intake/attachments` | OPERATIONAL, ADMIN | Anexa documentos/nota a processo existente por `processRef` ou `processId`. |
 | `GET` | `/intake/events` | OPERATIONAL, ADMIN | Eventos de intake; filtro `externalId` para checar idempotência, `status=FAILED` para retentativas, `kind=ESCALATED` para auditoria. |
+| `GET` | `/intake/mailbox/messages` | OPERATIONAL, ADMIN | Caixa de entrada desde `after`, já sem remetentes bloqueados (`exclude`), lida pelo servidor (decisão 9). |
+| `GET` | `/intake/mailbox/messages/:id` | OPERATIONAL, ADMIN | Corpo em texto limpo + anexos de uma mensagem (decisão 9). |
 | `GET` | `/intake/cursor` | OPERATIONAL, ADMIN | De onde a próxima execução continua a leitura da caixa (decisão 9). |
 | `PUT` | `/intake/cursor` | OPERATIONAL, ADMIN | Grava até onde a leitura chegou (fim de cada página); só anda para a frente. |
 | `POST` | `/intake/events/skip` | OPERATIONAL, ADMIN | Registra e-mail lido e não processado (IGNORED/ESCALATED) com o motivo (decisão 9). |

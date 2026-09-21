@@ -9,6 +9,8 @@ negócio vive aqui.
 
 | Ferramenta | Rota | Quando o agente usa |
 | --- | --- | --- |
+| `list_mailbox` | `GET /intake/mailbox/messages` | E-mails novos desde o cursor, já sem remetentes bloqueados (lista enxuta, pelo servidor). |
+| `get_mailbox_message` | `GET /intake/mailbox/messages/:id` | Corpo em texto limpo + anexos de um e-mail. |
 | `get_intake_cursor` | `GET /intake/cursor` | No início: a partir de que `receivedAt` ler a caixa. |
 | `advance_intake_cursor` | `PUT /intake/cursor` | Ao fim de cada página examinada: grava até onde a leitura chegou (remetentes bloqueados passam sem `skip_email`). |
 | `get_intake_event` | `GET /intake/events?externalId=` | Antes de tratar um e-mail: já foi processado? |

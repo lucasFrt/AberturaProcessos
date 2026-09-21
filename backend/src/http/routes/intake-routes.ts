@@ -15,7 +15,10 @@ import {
   intakeCreateProcessSchema,
   intakeCursorQuerySchema,
   intakeListEventsQuerySchema,
+  intakeListMailboxQuerySchema,
   intakeLookupQuerySchema,
+  intakeMailboxMessageParamsSchema,
+  intakeMailboxMessageQuerySchema,
   intakeSkipSchema,
 } from '@/http/schemas/intake-schemas';
 
@@ -64,6 +67,18 @@ export function buildIntakeRouter(
   );
 
   router.get('/events', validate({ query: intakeListEventsQuerySchema }), controller.listEvents);
+
+  // Leitura da caixa pelo servidor (docs/13, decisão 9): lista enxuta e corpo limpo.
+  router.get(
+    '/mailbox/messages',
+    validate({ query: intakeListMailboxQuerySchema }),
+    controller.listMailbox,
+  );
+  router.get(
+    '/mailbox/messages/:id',
+    validate({ params: intakeMailboxMessageParamsSchema, query: intakeMailboxMessageQuerySchema }),
+    controller.getMailboxMessage,
+  );
 
   // Cursor e descarte/escalada (docs/13, decisão 9): JSON puro, sem multipart.
   router.get('/cursor', validate({ query: intakeCursorQuerySchema }), controller.cursor);

@@ -6,6 +6,8 @@ import type {
   AdvanceCursorResult,
   IntakeCursor,
   IntakeResult,
+  ListMailboxResult,
+  MailboxMessageView,
   ProcessMatch,
   SkipIntakeResult,
 } from '@/services/intake-service';
@@ -146,6 +148,71 @@ interface AdvanceCursorDto {
 
 export function presentAdvanceCursor(result: AdvanceCursorResult): AdvanceCursorDto {
   return { advanced: result.advanced, cursor: presentIntakeCursor(result.cursor) };
+}
+
+interface MailboxMessageSummaryDto {
+  id: string;
+  internetMessageId: string | null;
+  subject: string;
+  from: { name: string | null; email: string | null };
+  receivedAt: string;
+  hasAttachments: boolean;
+  preview: string;
+}
+
+interface ListMailboxDto {
+  messages: MailboxMessageSummaryDto[];
+  listed: number;
+  blocked: number;
+  nextAfter: string | null;
+  hasMore: boolean;
+}
+
+export function presentListMailbox(result: ListMailboxResult): ListMailboxDto {
+  return {
+    messages: result.messages.map((message) => ({
+      id: message.id,
+      internetMessageId: message.internetMessageId,
+      subject: message.subject,
+      from: { name: message.from.name, email: message.from.email },
+      receivedAt: message.receivedAt.toISOString(),
+      hasAttachments: message.hasAttachments,
+      preview: message.preview,
+    })),
+    listed: result.listed,
+    blocked: result.blocked,
+    nextAfter: result.nextAfter ? result.nextAfter.toISOString() : null,
+    hasMore: result.hasMore,
+  };
+}
+
+interface MailboxMessageDto extends MailboxMessageSummaryDto {
+  to: string[];
+  cc: string[];
+  attachments: Array<{ name: string; mimeType: string; size: number }>;
+  bodyText: string;
+  bodyTruncated: boolean;
+}
+
+export function presentMailboxMessage(message: MailboxMessageView): MailboxMessageDto {
+  return {
+    id: message.id,
+    internetMessageId: message.internetMessageId,
+    subject: message.subject,
+    from: { name: message.from.name, email: message.from.email },
+    receivedAt: message.receivedAt.toISOString(),
+    hasAttachments: message.hasAttachments,
+    preview: message.bodyText.slice(0, 200),
+    to: [...message.to],
+    cc: [...message.cc],
+    attachments: message.attachments.map((attachment) => ({
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+    })),
+    bodyText: message.bodyText,
+    bodyTruncated: message.bodyTruncated,
+  };
 }
 
 interface ProcessMatchDto {

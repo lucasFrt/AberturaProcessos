@@ -33,7 +33,9 @@ test('lista as ferramentas do intake com seus campos obrigatórios', async () =>
       'create_process_from_email',
       'get_intake_cursor',
       'get_intake_event',
+      'get_mailbox_message',
       'get_process',
+      'list_mailbox',
       'lookup_process',
       'skip_email',
     ]);

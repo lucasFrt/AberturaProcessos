@@ -1,5 +1,6 @@
 import { FakeCnpjLookupProvider } from '../helpers/fakes/fake-cnpj-lookup-provider';
 import { FakeMailAttachmentProvider } from '../helpers/fakes/fake-mail-attachment-provider';
+import { FakeMailboxReader } from '../helpers/fakes/fake-mailbox-reader';
 import { FakeStorageProvider } from '../helpers/fakes/fake-storage-provider';
 import { InMemoryCompanyRepository } from '../helpers/fakes/in-memory-company-repository';
 import { InMemoryDocumentRepository } from '../helpers/fakes/in-memory-document-repository';
@@ -15,6 +16,7 @@ import type { Company } from '@/domain/entities/company';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '@/domain/errors/app-error';
 import { DocumentService } from '@/services/document-service';
 import type { AttachIntakeInput, CreateProcessIntakeInput } from '@/services/intake-service';
+import { cleanBodyText } from '@/services/intake-service';
 import { IntakeService } from '@/services/intake-service';
 import { ProcessService } from '@/services/process-service';
 
@@ -35,6 +37,7 @@ interface Context {
   documentRepository: InMemoryDocumentRepository;
   cnpjLookupProvider: FakeCnpjLookupProvider;
   mailAttachmentProvider: FakeMailAttachmentProvider;
+  mailboxReader: FakeMailboxReader;
   clientOrganizationId: string;
 }
 
@@ -52,6 +55,7 @@ async function buildContext(
   const userRepository = new InMemoryUserRepository();
   const cnpjLookupProvider = new FakeCnpjLookupProvider();
   const mailAttachmentProvider = new FakeMailAttachmentProvider();
+  const mailboxReader = new FakeMailboxReader();
 
   const stage = await stageRepository.create({
     name: 'Entrada',
@@ -102,6 +106,7 @@ async function buildContext(
     documentService,
     cnpjLookupProvider: overrides.cnpjLookup === false ? null : cnpjLookupProvider,
     mailAttachmentProvider: overrides.mailAttachments === false ? null : mailAttachmentProvider,
+    mailboxReader: overrides.mailAttachments === false ? null : mailboxReader,
     maxAttachmentBytes: 1024,
   });
 
@@ -116,6 +121,7 @@ async function buildContext(
     documentRepository,
     cnpjLookupProvider,
     mailAttachmentProvider,
+    mailboxReader,
     clientOrganizationId: clientOrganization.id,
   };
 }
@@ -483,6 +489,190 @@ describe('IntakeService (docs/13)', () => {
       });
       expect(ctx.companyRepository.items).toHaveLength(1);
       expect(second.warnings.some((w) => w.includes('concluído'))).toBe(true);
+    });
+  });
+
+  describe('remetente terceiro: empresa pelo nome (decisão 11)', () => {
+    it('senderIsClient=false sem nome responde COMPANY_REQUIRED; com nome desconhecido cria pendente sem domínio', async () => {
+      const ctx = await buildContext();
+
+      await expect(
+        ctx.service.createProcessFromEmail(
+          ACTOR,
+          createInput({
+            requester: { email: 'op3@cilagency.com.br', name: 'Isabela' },
+            company: { document: null, senderIsClient: false },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'COMPANY_REQUIRED' });
+
+      const result = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({
+          source: { channel: 'EMAIL', externalId: 'msg-3p', receivedAt: RECEIVED_AT },
+          requester: { email: 'op3@cilagency.com.br', name: 'Isabela' },
+          company: { document: null, name: 'FU XING COMERCIO', senderIsClient: false },
+          reference: '02935-0726IM / NBZY26071470',
+        }),
+      );
+      expect(result.company?.created).toBe(true);
+      expect(result.organization).toMatchObject({ created: true, domainRegistered: false });
+      const company = await ctx.companyRepository.findById(result.company?.id ?? '');
+      expect(company).toMatchObject({ cnpj: null, legalName: 'FU XING COMERCIO' });
+      // O domínio do agente não vira vínculo com o cliente.
+      expect(await ctx.emailDomainRepository.findByDomain('cilagency.com.br')).toBeNull();
+      expect(result.process.requesterEmail).toBe('op3@cilagency.com.br');
+    });
+
+    it('senderIsClient=false com nome que corresponde a uma empresa existente usa essa empresa', async () => {
+      const ctx = await buildContext();
+      const company = await seedCompany(ctx, VALID_CNPJ, ctx.clientOrganizationId);
+      await ctx.companyRepository.update(company.id, { legalName: 'PROMEDON DO BRASIL LTDA' });
+
+      const result = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({
+          requester: { email: 'tatiana@agente.com.br' },
+          company: { document: null, name: 'Promedon', senderIsClient: false },
+        }),
+      );
+      expect(result.company).toEqual({ id: company.id, created: false });
+      expect(ctx.companyRepository.items).toHaveLength(1);
+    });
+  });
+
+  describe('caixa pelo servidor: listMailbox e getMailboxMessage (decisão 9)', () => {
+    it('lista desde after, descarta remetentes bloqueados e devolve nextAfter da última listada', async () => {
+      const ctx = await buildContext();
+      const t = (minute: number): Date =>
+        new Date(`2026-09-21T15:${String(minute).padStart(2, '0')}:00.000Z`);
+      ctx.mailboxReader.add({
+        id: 'a',
+        receivedAt: t(1),
+        subject: 'Antigo',
+        from: { name: 'X', email: 'x@cliente.com' },
+      });
+      ctx.mailboxReader.add({
+        id: 'b',
+        receivedAt: t(5),
+        subject: 'Fatura',
+        from: { name: 'Multiterminais', email: 'faturamento@multiterminais.com.br' },
+      });
+      ctx.mailboxReader.add({
+        id: 'c',
+        receivedAt: t(6),
+        subject: 'Novo Processo',
+        from: { name: 'Gabriel', email: 'importacao@casaenovidade.com.br' },
+      });
+      ctx.mailboxReader.add({
+        id: 'd',
+        receivedAt: t(7),
+        subject: 'DUIMP',
+        from: { name: 'Vitória', email: 'vitoria@opusce.com.br' },
+      });
+      ctx.mailboxReader.add({
+        id: 'e',
+        receivedAt: t(9),
+        subject: 'Depois',
+        from: { name: null, email: 'z@z.com' },
+      });
+
+      const result = await ctx.service.listMailbox({
+        after: t(2),
+        limit: 3,
+        excludeSenders: ['@opusce.com.br', 'MULTITERMINAIS'],
+      });
+      expect(result.messages.map((m) => m.id)).toEqual(['c']);
+      expect(result).toMatchObject({ listed: 3, blocked: 2, nextAfter: t(7), hasMore: true });
+      expect(ctx.mailboxReader.listCalls[0]).toEqual({ after: t(2), limit: 3 });
+    });
+
+    it('detalhe devolve corpo limpo, sem histórico citado, e anexos sem inline', async () => {
+      const ctx = await buildContext();
+      ctx.mailboxReader.add({
+        id: 'm1',
+        receivedAt: RECEIVED_AT,
+        subject: 'RES: PRÉ ALERTA',
+        from: { name: 'Ruan', email: 'ruan@globoimport.com.br' },
+        to: ['opusoperacional@opusce.com.br'],
+        bodyText:
+          'Bom dia Vitória\r\n\r\nNesse caso, será removido a Marimex,\r\n\r\n\r\nObrigado\r\n\r\nDe: Vitória Todeschini <vitoria@opusce.com.br>\r\nEnviada em: segunda\r\nPara: Ruan\r\nAssunto: PRÉ ALERTA\r\n\r\nPrezados, segue pré alerta...',
+        hasAttachments: true,
+        attachments: [
+          { name: 'image001.png', mimeType: 'image/png', size: 10, isInline: true },
+          { name: 'HBL.pdf', mimeType: 'application/pdf', size: 1000, isInline: false },
+        ],
+      });
+
+      const view = await ctx.service.getMailboxMessage('m1', 6000);
+      expect(view.bodyText).toBe(
+        'Bom dia Vitória\n\nNesse caso, será removido a Marimex,\n\nObrigado',
+      );
+      expect(view.bodyTruncated).toBe(false);
+      expect(view.attachments).toEqual([
+        { name: 'HBL.pdf', mimeType: 'application/pdf', size: 1000, isInline: false },
+      ]);
+      expect(view.to).toEqual(['opusoperacional@opusce.com.br']);
+
+      await expect(ctx.service.getMailboxMessage('nao-existe', 6000)).rejects.toMatchObject({
+        code: 'MAIL_MESSAGE_NOT_FOUND',
+      });
+    });
+
+    it('sem leitor (Graph desligado) responde 503 MAIL_READ_DISABLED; provedor indisponível responde MAIL_UNAVAILABLE', async () => {
+      const off = await buildContext({ mailAttachments: false });
+      await expect(
+        off.service.listMailbox({ after: RECEIVED_AT, limit: 10, excludeSenders: [] }),
+      ).rejects.toMatchObject({ code: 'MAIL_READ_DISABLED', status: 503 });
+
+      const ctx = await buildContext();
+      ctx.mailboxReader.unavailable = 'Graph fora do ar';
+      await expect(
+        ctx.service.listMailbox({ after: RECEIVED_AT, limit: 10, excludeSenders: [] }),
+      ).rejects.toMatchObject({ code: 'MAIL_UNAVAILABLE', status: 503 });
+    });
+
+    it('cleanBodyText corta no marcador de histórico, ignora marcador no início e trunca', () => {
+      expect(cleanBodyText('De: alguém\nOi\n\n\n\nTchau   \n', 100)).toEqual({
+        text: 'De: alguém\nOi\n\nTchau',
+        truncated: false,
+      });
+      const long = `${'a'.repeat(50)}\n\nOn Mon, Sep 21, 2026 at 10:00 AM John <j@x.com> wrote:\n> citado`;
+      expect(cleanBodyText(long, 10)).toEqual({ text: `${'a'.repeat(10)}\n[…]`, truncated: true });
+      expect(cleanBodyText(long, 100).text).toBe('a'.repeat(50));
+      expect(
+        cleanBodyText(`Segue o documento.\n${'_'.repeat(30)}\nFrom: x\nquoted`, 100).text,
+      ).toBe('Segue o documento.');
+    });
+  });
+
+  describe('attachToProcess — identificadores novos na referência (decisão 11)', () => {
+    it('acrescenta identificadores que faltam, ignora repetidos e respeita 255 caracteres', async () => {
+      const ctx = await buildContext();
+      const company = await seedCompany(ctx, VALID_CNPJ, ctx.clientOrganizationId);
+      const process = await ctx.processRepository.createWithHistory({
+        reference: '230/26',
+        additionalInfo: null,
+        clientCompanyId: company.id,
+        requestingCompanyId: null,
+        currentStageId: ctx.processRepository.stages[0]?.id ?? 'stage',
+        createdById: ACTOR,
+        source: 'WEB',
+        requesterName: null,
+        requesterEmail: null,
+        receivedAt: null,
+      });
+
+      const result = await ctx.service.attachToProcess(
+        ACTOR,
+        attachInput({
+          processId: process.id,
+          addReferences: ['BL 0406', '230/26', 'bl 0406', 'x'.repeat(250)],
+        }),
+      );
+      expect(result.process.reference).toBe('230/26 / BL 0406');
+      expect(result.warnings.some((w) => w.includes('Referência cheia'))).toBe(true);
+      expect(result.process.history.some((h) => h.action === 'PROCESS_UPDATED')).toBe(true);
     });
   });
 

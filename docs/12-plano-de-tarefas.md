@@ -459,6 +459,34 @@ CNPJ conclui a pendente; duas pendentes coexistem e CNPJ duplicado continua reje
 webmail público sem CNPJ responde `400 COMPANY_REQUIRED`; `prisma migrate diff` contra o banco
 migrado não acusa drift; `npm test` no MCP lista as oito ferramentas.
 
+---
+
+### Tarefa 28 — Caixa lida pelo servidor e documentos de qualquer parceiro
+
+Resultado da primeira execução com Haiku (doc 13, decisões 9 e 11): a listagem pelo conector não
+cabe numa execução, e a IA ignorava documentos vindos de terceiros. (a) `MailboxReader` no domínio
+com implementação no mesmo provider Graph (`listMessages` na Inbox com `$filter`/`$orderby`,
+`getMessage` com `Prefer: outlook.body-content-type="text"`); `GET /intake/mailbox/messages`
+(`after`, `limit`, `exclude` aplicado no servidor; `listed`/`blocked`/`nextAfter`/`hasMore`) e
+`GET /intake/mailbox/messages/:id` (corpo em texto sem histórico citado, `maxChars`, anexos sem
+inline); erros `MAIL_READ_DISABLED`/`MAIL_UNAVAILABLE`. (b) `company.senderIsClient=false` resolve
+o cliente pelo nome (empresa existente ou pendente sem domínio); `addReferences` em
+`/intake/attachments` acrescenta identificadores à referência. MCP ganha `list_mailbox` e
+`get_mailbox_message`; o prompt da rotina lê pela API, trata documento de qualquer remetente
+externo como complemento (ou cria o processo) e não para enquanto `hasMore`.
+
+**Refs:** doc 13 (decisões 9 e 11), doc 05 (seção "Intake": `/intake/mailbox/*`,
+`senderIsClient`, `addReferences`), `docs/prompts/rotina-intake-claude-max.md`.
+
+**Aceite:** listagem desde `after` descarta remetentes de `exclude` (e-mail ou nome, sem
+maiúsculas) e devolve `nextAfter` da última listada mesmo bloqueada; detalhe corta o histórico
+citado no primeiro marcador com texto antes, ignora marcador no início, trunca em `maxChars` e
+omite anexos inline; Graph desligado responde 503 `MAIL_READ_DISABLED` e provedor fora, 503
+`MAIL_UNAVAILABLE`; `senderIsClient=false` sem nome responde `COMPANY_REQUIRED`, com nome novo cria
+organização + empresa pendentes sem `EmailDomain`, com nome existente usa a empresa;
+`addReferences` acrescenta só o que falta, respeita 255 caracteres com aviso e gera
+`PROCESS_UPDATED`; `npm test` no MCP lista as dez ferramentas.
+
 
 ## Ordem e paralelismo
 

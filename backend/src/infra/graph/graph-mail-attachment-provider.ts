@@ -4,6 +4,16 @@ import type {
   MailAttachmentProvider,
   MailAttachmentsOutcome,
 } from '@/domain/mail/mail-attachment-provider';
+import type {
+  GetMailboxMessageOutcome,
+  ListMailboxOptions,
+  ListMailboxOutcome,
+  MailboxAttachmentSummary,
+  MailboxMessageDetail,
+  MailboxMessageSummary,
+  MailboxReader,
+  MailboxSender,
+} from '@/domain/mail/mailbox-reader';
 
 /** Forma mínima do logger do pino que este provider usa (mesma abordagem de `infra/cnpj`). */
 export interface GraphLogger {
@@ -44,8 +54,78 @@ interface AttachmentListResponse {
   value?: unknown;
 }
 
+interface GraphRecipient {
+  emailAddress?: { name?: unknown; address?: unknown };
+}
+
+interface GraphMessage {
+  id?: unknown;
+  internetMessageId?: unknown;
+  subject?: unknown;
+  from?: GraphRecipient;
+  toRecipients?: unknown;
+  ccRecipients?: unknown;
+  receivedDateTime?: unknown;
+  hasAttachments?: unknown;
+  bodyPreview?: unknown;
+  body?: { contentType?: unknown; content?: unknown };
+}
+
+interface GraphMessageListResponse {
+  value?: unknown;
+  '@odata.nextLink'?: unknown;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function stringOr(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function senderOf(recipient: GraphRecipient | undefined): MailboxSender {
+  const address = recipient?.emailAddress;
+  return {
+    name: typeof address?.name === 'string' && address.name.length > 0 ? address.name : null,
+    email:
+      typeof address?.address === 'string' && address.address.length > 0
+        ? address.address.toLowerCase()
+        : null,
+  };
+}
+
+function addressesOf(list: unknown): string[] {
+  if (!Array.isArray(list)) return [];
+  const result: string[] = [];
+  for (const item of list) {
+    if (!isRecord(item)) continue;
+    const address = (item as GraphRecipient).emailAddress?.address;
+    if (typeof address === 'string' && address.length > 0) result.push(address.toLowerCase());
+  }
+  return result;
+}
+
+/** Campos comuns entre a listagem e o detalhe. `null` se faltar id ou data. */
+function summaryOf(raw: unknown): MailboxMessageSummary | null {
+  if (!isRecord(raw)) return null;
+  const message = raw as GraphMessage;
+  if (typeof message.id !== 'string' || message.id.length === 0) return null;
+  const receivedAt =
+    typeof message.receivedDateTime === 'string' ? new Date(message.receivedDateTime) : null;
+  if (!receivedAt || Number.isNaN(receivedAt.getTime())) return null;
+  return {
+    id: message.id,
+    internetMessageId:
+      typeof message.internetMessageId === 'string' && message.internetMessageId.length > 0
+        ? message.internetMessageId
+        : null,
+    subject: stringOr(message.subject, ''),
+    from: senderOf(message.from),
+    receivedAt,
+    hasAttachments: message.hasAttachments === true,
+    preview: stringOr(message.bodyPreview, ''),
+  };
 }
 
 /** Renova o token um pouco antes de expirar, para não usar um que morre no meio do download. */
@@ -73,7 +153,7 @@ const TOKEN_EXPIRY_SKEW_MS = 60_000;
  * backend não tem cliente HTTP nas dependências e adicionar um SDK inteiro
  * do Graph para duas chamadas GET não se paga.
  */
-export class GraphMailAttachmentProvider implements MailAttachmentProvider {
+export class GraphMailAttachmentProvider implements MailAttachmentProvider, MailboxReader {
   private cachedToken: { value: string; expiresAt: number } | null = null;
 
   constructor(
@@ -112,6 +192,136 @@ export class GraphMailAttachmentProvider implements MailAttachmentProvider {
       'Mensagem localizada por internetMessageId',
     );
     return this.listAttachmentsById(resolved.messageId, token);
+  }
+
+  /**
+   * Caixa de entrada a partir de `after`, mais antigos primeiro (docs/13,
+   * decisão 9). `$select` enxuto de propósito: é a lista que o agente lê a
+   * cada execução. `hasMore` vem da presença de `@odata.nextLink`.
+   */
+  async listMessages(options: ListMailboxOptions): Promise<ListMailboxOutcome> {
+    let token: string;
+    try {
+      token = await this.getAccessToken();
+    } catch (error) {
+      this.logger.warn({ err: error }, 'Falha ao obter token do Microsoft Graph');
+      return { kind: 'UNAVAILABLE', reason: 'Falha de autenticação no Microsoft Graph.' };
+    }
+
+    const filter = `receivedDateTime gt ${options.after.toISOString()}`;
+    const url =
+      `${this.graphBaseUrl()}/users/${encodeURIComponent(this.config.mailbox)}/mailFolders/inbox/messages` +
+      `?$filter=${encodeURIComponent(filter)}&$orderby=receivedDateTime%20asc&$top=${options.limit}` +
+      `&$select=id,internetMessageId,subject,from,receivedDateTime,hasAttachments,bodyPreview`;
+
+    const outcome = await this.getJson(url, token, 'listar a caixa de entrada');
+    if (outcome.kind !== 'OK') {
+      return outcome.kind === 'NOT_FOUND'
+        ? { kind: 'UNAVAILABLE', reason: 'Caixa de entrada não encontrada no Microsoft Graph.' }
+        : outcome;
+    }
+    const payload = outcome.payload as GraphMessageListResponse;
+    const list = Array.isArray(payload.value) ? payload.value : [];
+    const messages: MailboxMessageSummary[] = [];
+    for (const raw of list) {
+      const summary = summaryOf(raw);
+      if (summary) messages.push(summary);
+    }
+    return { kind: 'OK', messages, hasMore: typeof payload['@odata.nextLink'] === 'string' };
+  }
+
+  /** Detalhe com corpo em texto (`Prefer: outlook.body-content-type="text"`) e metadados dos anexos. */
+  async getMessage(messageId: string): Promise<GetMailboxMessageOutcome> {
+    let token: string;
+    try {
+      token = await this.getAccessToken();
+    } catch (error) {
+      this.logger.warn({ err: error }, 'Falha ao obter token do Microsoft Graph');
+      return { kind: 'UNAVAILABLE', reason: 'Falha de autenticação no Microsoft Graph.' };
+    }
+
+    const base = `${this.graphBaseUrl()}/users/${encodeURIComponent(this.config.mailbox)}/messages/${encodeURIComponent(messageId)}`;
+    const messageOutcome = await this.getJson(
+      `${base}?$select=id,internetMessageId,subject,from,toRecipients,ccRecipients,receivedDateTime,hasAttachments,bodyPreview,body`,
+      token,
+      'ler a mensagem',
+      { Prefer: 'outlook.body-content-type="text"' },
+    );
+    if (messageOutcome.kind !== 'OK') {
+      return messageOutcome.kind === 'NOT_FOUND' ? { kind: 'MESSAGE_NOT_FOUND' } : messageOutcome;
+    }
+    const summary = summaryOf(messageOutcome.payload);
+    if (!summary) {
+      return { kind: 'UNAVAILABLE', reason: 'Resposta do Microsoft Graph é inválida.' };
+    }
+    const raw = messageOutcome.payload as GraphMessage;
+
+    let attachments: MailboxAttachmentSummary[] = [];
+    if (summary.hasAttachments) {
+      const listOutcome = await this.getJson(
+        `${base}/attachments?$select=id,name,contentType,size,isInline`,
+        token,
+        'listar anexos',
+      );
+      if (listOutcome.kind !== 'OK') {
+        return listOutcome.kind === 'NOT_FOUND' ? { kind: 'MESSAGE_NOT_FOUND' } : listOutcome;
+      }
+      attachments = this.parseList(listOutcome.payload).map((item) => ({
+        name: item.name,
+        mimeType: item.mimeType,
+        size: item.size,
+        isInline: item.isInline,
+      }));
+    }
+
+    const detail: MailboxMessageDetail = {
+      ...summary,
+      to: addressesOf(raw.toRecipients),
+      cc: addressesOf(raw.ccRecipients),
+      bodyText: stringOr(raw.body?.content, ''),
+      attachments,
+    };
+    return { kind: 'OK', message: detail };
+  }
+
+  /** GET JSON com a mesma classificação de erros de `listAttachmentsById`. */
+  private async getJson(
+    url: string,
+    token: string,
+    action: string,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<
+    | { kind: 'OK'; payload: unknown }
+    | { kind: 'NOT_FOUND' }
+    | { kind: 'UNAVAILABLE'; reason: string }
+  > {
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...extraHeaders },
+        signal: AbortSignal.timeout(this.config.timeoutMs),
+      });
+    } catch (error) {
+      this.logger.warn({ err: error }, `Falha de rede ao ${action} no Graph`);
+      return { kind: 'UNAVAILABLE', reason: 'Falha de rede ao consultar o Microsoft Graph.' };
+    }
+    if (response.status === 404 || response.status === 400) {
+      return { kind: 'NOT_FOUND' };
+    }
+    if (!response.ok) {
+      this.logger.warn(
+        { status: response.status },
+        `Graph respondeu status inesperado ao ${action}`,
+      );
+      return { kind: 'UNAVAILABLE', reason: `Microsoft Graph respondeu HTTP ${response.status}.` };
+    }
+    try {
+      return { kind: 'OK', payload: await response.json() };
+    } catch (error) {
+      this.logger.warn({ err: error }, 'Resposta do Graph não é JSON');
+      return { kind: 'UNAVAILABLE', reason: 'Resposta do Microsoft Graph é inválida.' };
+    }
   }
 
   private async resolveByInternetMessageId(
@@ -242,12 +452,18 @@ export class GraphMailAttachmentProvider implements MailAttachmentProvider {
 
   private parseList(
     payload: unknown,
-  ): Array<{ id: string; name: string; mimeType: string; isInline: boolean }> {
+  ): Array<{ id: string; name: string; mimeType: string; size: number; isInline: boolean }> {
     if (!isRecord(payload)) return [];
     const list = (payload as AttachmentListResponse).value;
     if (!Array.isArray(list)) return [];
 
-    const result: Array<{ id: string; name: string; mimeType: string; isInline: boolean }> = [];
+    const result: Array<{
+      id: string;
+      name: string;
+      mimeType: string;
+      size: number;
+      isInline: boolean;
+    }> = [];
     for (const raw of list) {
       if (!isRecord(raw)) continue;
       const item = raw as AttachmentListItem;
@@ -263,6 +479,7 @@ export class GraphMailAttachmentProvider implements MailAttachmentProvider {
           typeof item.contentType === 'string' && item.contentType.length > 0
             ? item.contentType
             : 'application/octet-stream',
+        size: typeof item.size === 'number' ? item.size : 0,
         isInline: item.isInline === true,
       });
     }

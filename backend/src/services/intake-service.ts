@@ -14,6 +14,11 @@ import type {
 import type { IntakeChannel, IntakeEventKind } from '@/domain/enums';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '@/domain/errors/app-error';
 import type { MailAttachmentProvider } from '@/domain/mail/mail-attachment-provider';
+import type {
+  MailboxAttachmentSummary,
+  MailboxMessageSummary,
+  MailboxReader,
+} from '@/domain/mail/mailbox-reader';
 import type { Page, PaginationParams } from '@/domain/pagination';
 import type { CompanyRepository } from '@/domain/repositories/company-repository';
 import type { EmailDomainRepository } from '@/domain/repositories/email-domain-repository';
@@ -38,6 +43,8 @@ export interface IntakeServiceDeps {
   cnpjLookupProvider: CnpjLookupProvider | null;
   /** `null` = `GRAPH_INTAKE_ENABLED=false`; `fetchAttachments` responde 503 (docs/13, decisão 3). */
   mailAttachmentProvider: MailAttachmentProvider | null;
+  /** `null` = `GRAPH_INTAKE_ENABLED=false`; `/intake/mailbox/*` responde 503 (docs/13, decisão 9). */
+  mailboxReader: MailboxReader | null;
   /** Mesmo limite do upload web (`MAX_UPLOAD_SIZE_MB`); anexo maior é pulado com aviso. */
   maxAttachmentBytes: number;
 }
@@ -67,6 +74,13 @@ export interface IntakeCompanyRef {
   document?: string | null | undefined;
   /** Razão social/nome informado no e-mail — usado quando a Receita não responde ou é CPF. */
   name?: string | null | undefined;
+  /**
+   * `false` = quem escreveu não é o cliente (agente de carga, armador,
+   * despachante...). Sem documento, a empresa é então resolvida pelo `name`
+   * (docs/13, decisão 11), nunca pelo domínio do remetente — que é de
+   * terceiro e não pode virar o cadastro do cliente. Padrão `true`.
+   */
+  senderIsClient?: boolean | undefined;
 }
 
 export interface CreateProcessIntakeInput {
@@ -91,6 +105,12 @@ export interface AttachIntakeInput {
   processId?: string | null | undefined;
   /** Texto do e-mail a anexar em `additionalInfo`, com carimbo de remetente/data. */
   note?: string | null | undefined;
+  /**
+   * Identificadores do embarque que este e-mail revelou (HBL, contêiner,
+   * número do agente...) para acrescentar à `reference` do processo, de
+   * modo que os próximos documentos casem (docs/13, decisão 11).
+   */
+  addReferences?: string[] | null | undefined;
   fetchAttachments: boolean;
   files: UploadFileInput[];
 }
@@ -104,6 +124,38 @@ export interface IntakeResult {
   company: { id: string; created: boolean } | null;
   organization: { id: string; created: boolean; domainRegistered: boolean } | null;
   warnings: string[];
+}
+
+export interface ListMailboxInput {
+  after: Date;
+  limit: number;
+  /** Termos (minúsculas) que, contidos no e-mail ou no nome do remetente, descartam a mensagem. */
+  excludeSenders: string[];
+}
+
+export interface ListMailboxResult {
+  messages: MailboxMessageSummary[];
+  /** Quantas o provedor devolveu, antes do filtro de remetentes. */
+  listed: number;
+  blocked: number;
+  /** `receivedAt` da última mensagem listada (bloqueada ou não) — o próximo `after`. */
+  nextAfter: Date | null;
+  hasMore: boolean;
+}
+
+export interface MailboxMessageView {
+  id: string;
+  internetMessageId: string | null;
+  subject: string;
+  from: { name: string | null; email: string | null };
+  to: string[];
+  cc: string[];
+  receivedAt: Date;
+  hasAttachments: boolean;
+  attachments: MailboxAttachmentSummary[];
+  /** Corpo em texto, sem histórico citado, limitado a `maxChars`. */
+  bodyText: string;
+  bodyTruncated: boolean;
 }
 
 /** E-mail que o agente decidiu não transformar em processo (docs/13, decisão 9). */
@@ -199,6 +251,48 @@ function emailDomainOf(email: string): string | null {
     .trim()
     .toLowerCase();
   return domain.length > 0 ? domain : null;
+}
+
+/**
+ * Onde começa o histórico citado num corpo em texto — cabeçalhos de resposta
+ * do Outlook/Gmail em português, inglês e espanhol e o separador de linha do
+ * Outlook. Cortar ali mantém só a mensagem nova: é o que o agente precisa
+ * ler, e o que cabe na execução (docs/13, decisão 9).
+ */
+const QUOTED_HISTORY_MARKERS: RegExp[] = [
+  /^\s*(De|From|Von|Da):\s.+$/m,
+  /^\s*-{3,}\s*(Mensagem original|Original Message|Mensaje original)\s*-{3,}/im,
+  /^\s*_{10,}\s*$/m,
+  /^\s*Em .{6,80} escreveu:\s*$/m,
+  /^\s*On .{6,80} wrote:\s*$/m,
+  /^\s*El .{6,80} escribió:\s*$/m,
+];
+
+/** Remove histórico citado, normaliza linhas em branco e limita o tamanho. */
+export function cleanBodyText(raw: string, maxChars: number): { text: string; truncated: boolean } {
+  let text = raw.replace(/\r\n?/g, '\n');
+  let cut = text.length;
+  for (const marker of QUOTED_HISTORY_MARKERS) {
+    const match = marker.exec(text);
+    // Marcador sem texto antes é o próprio e-mail (ex.: encaminhamento), não histórico.
+    if (match && match.index < cut && text.slice(0, match.index).trim().length > 0) {
+      cut = match.index;
+    }
+  }
+  text = text.slice(0, cut);
+  text = text
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+$/g, ''))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (text.length <= maxChars) return { text, truncated: false };
+  return { text: `${text.slice(0, maxChars).trimEnd()}\n[…]`, truncated: true };
+}
+
+function senderMatches(from: MailboxMessageSummary['from'], terms: string[]): boolean {
+  const haystack = `${from.email ?? ''} ${from.name ?? ''}`.toLowerCase();
+  return terms.some((term) => term.length > 0 && haystack.includes(term));
 }
 
 function formatSaoPaulo(date: Date): string {
@@ -335,7 +429,7 @@ export class IntakeService {
         receivedAt: file.receivedAt ?? input.source.receivedAt,
       }));
 
-      if (files.length === 0 && !input.note) {
+      if (files.length === 0 && !input.note && !(input.addReferences?.length ?? 0)) {
         throw new ValidationError('Nada a anexar: informe arquivos, fetchAttachments ou uma nota.');
       }
 
@@ -343,6 +437,9 @@ export class IntakeService {
 
       if (input.note) {
         await this.appendNote(processId, actorId, input);
+      }
+      if (input.addReferences && input.addReferences.length > 0) {
+        await this.appendReferences(processId, actorId, input.addReferences, warnings);
       }
 
       return this.complete(event, processId, {
@@ -412,6 +509,71 @@ export class IntakeService {
     pagination: PaginationParams,
   ): Promise<Page<IntakeEvent>> {
     return this.deps.intakeEventRepository.list(filters, pagination);
+  }
+
+  /**
+   * Caixa de entrada desde `after`, já sem os remetentes bloqueados (docs/13,
+   * decisão 9). `nextAfter` é o `receivedAt` da última mensagem que o
+   * provedor devolveu — bloqueada ou não — porque o cursor tem de passar
+   * também pelo que foi descartado.
+   */
+  async listMailbox(input: ListMailboxInput): Promise<ListMailboxResult> {
+    const reader = this.requireMailboxReader();
+    const outcome = await reader.listMessages({ after: input.after, limit: input.limit });
+    if (outcome.kind === 'UNAVAILABLE') {
+      throw new AppError('MAIL_UNAVAILABLE', outcome.reason, 503);
+    }
+    const terms = input.excludeSenders.map((term) => term.trim().toLowerCase());
+    const kept = outcome.messages.filter((message) => !senderMatches(message.from, terms));
+    const last = outcome.messages[outcome.messages.length - 1];
+    return {
+      messages: kept,
+      listed: outcome.messages.length,
+      blocked: outcome.messages.length - kept.length,
+      nextAfter: last ? last.receivedAt : null,
+      hasMore: outcome.hasMore,
+    };
+  }
+
+  /** Detalhe com o corpo limpo (sem histórico citado) e limitado a `maxChars`. */
+  async getMailboxMessage(messageId: string, maxChars: number): Promise<MailboxMessageView> {
+    const reader = this.requireMailboxReader();
+    const outcome = await reader.getMessage(messageId);
+    if (outcome.kind === 'MESSAGE_NOT_FOUND') {
+      throw new NotFoundError(
+        'MAIL_MESSAGE_NOT_FOUND',
+        'Mensagem não encontrada na caixa de e-mail configurada.',
+      );
+    }
+    if (outcome.kind === 'UNAVAILABLE') {
+      throw new AppError('MAIL_UNAVAILABLE', outcome.reason, 503);
+    }
+    const message = outcome.message;
+    const body = cleanBodyText(message.bodyText, maxChars);
+    return {
+      id: message.id,
+      internetMessageId: message.internetMessageId,
+      subject: message.subject,
+      from: message.from,
+      to: message.to,
+      cc: message.cc,
+      receivedAt: message.receivedAt,
+      hasAttachments: message.hasAttachments,
+      attachments: message.attachments.filter((attachment) => !attachment.isInline),
+      bodyText: body.text,
+      bodyTruncated: body.truncated,
+    };
+  }
+
+  private requireMailboxReader(): MailboxReader {
+    if (!this.deps.mailboxReader) {
+      throw new AppError(
+        'MAIL_READ_DISABLED',
+        'A leitura da caixa pelo servidor está desabilitada (GRAPH_INTAKE_ENABLED=false).',
+        503,
+      );
+    }
+    return this.deps.mailboxReader;
   }
 
   /**
@@ -751,7 +913,9 @@ export class IntakeService {
   }> {
     const document = ref.document?.trim() ?? '';
     if (document.length === 0) {
-      return this.resolveCompanyByDomain(requesterEmail, ref.name ?? null, warnings);
+      return ref.senderIsClient === false
+        ? this.resolveCompanyByName(ref.name ?? null, warnings)
+        : this.resolveCompanyByDomain(requesterEmail, ref.name ?? null, warnings);
     }
 
     const classified = classifyDocument(document);
@@ -908,6 +1072,87 @@ export class IntakeService {
     return { company, created: false, organization };
   }
 
+  /**
+   * Remetente terceiro (agente, armador, despachante) sem CNPJ do cliente
+   * (docs/13, decisão 11): o cliente é identificado só pelo nome que o
+   * e-mail traz ("Cnee: PROMEDON"). Uma empresa com esse nome → usa; várias
+   * → ambíguo; nenhuma → organização + empresa pendentes com esse nome, sem
+   * domínio nenhum — o domínio do remetente é do terceiro.
+   */
+  private async resolveCompanyByName(
+    name: string | null,
+    warnings: string[],
+  ): Promise<{
+    company: Company;
+    created: boolean;
+    organization: { id: string; created: boolean; domainRegistered: boolean };
+  }> {
+    const hint = name?.trim() ?? '';
+    if (hint.length < 3) {
+      throw new AppError(
+        'COMPANY_REQUIRED',
+        'Remetente terceiro sem CNPJ/CPF nem nome do cliente: informe company.name (razão social como aparece no e-mail) ou company.document.',
+        400,
+      );
+    }
+
+    const page = await this.deps.companyRepository.list(
+      { q: hint, isActive: true },
+      { page: 1, pageSize: 50 },
+    );
+    const lowered = hint.toLowerCase();
+    const candidates = page.items.filter(
+      (company) =>
+        company.legalName.toLowerCase().includes(lowered) ||
+        (company.tradeName?.toLowerCase().includes(lowered) ?? false),
+    );
+    if (candidates.length > 1) {
+      throw new ConflictError(
+        'COMPANY_AMBIGUOUS',
+        `Mais de uma empresa corresponde a "${hint}". Informe company.document.`,
+        {
+          candidates: candidates.map((company) => ({
+            id: company.id,
+            cnpj: company.cnpj,
+            legalName: company.legalName,
+            tradeName: company.tradeName,
+          })),
+        },
+      );
+    }
+    const found = candidates[0];
+    if (found) {
+      warnings.push(
+        `Sem CNPJ/CPF no e-mail (remetente terceiro): empresa "${found.legalName}" resolvida pelo nome.`,
+      );
+      return {
+        company: found,
+        created: false,
+        organization: { id: found.organizationId, created: false, domainRegistered: false },
+      };
+    }
+
+    const organization = await this.deps.organizationRepository.create({
+      name: hint,
+      isInternal: false,
+    });
+    const company = await this.deps.companyRepository.create({
+      cnpj: null,
+      documentType: null,
+      legalName: hint,
+      tradeName: null,
+      organizationId: organization.id,
+    });
+    warnings.push(
+      `Sem CNPJ/CPF no e-mail (remetente terceiro): organização e empresa "${hint}" criadas em cadastro pendente, sem domínio. Complete o CNPJ na tela de empresas.`,
+    );
+    return {
+      company,
+      created: true,
+      organization: { id: organization.id, created: true, domainRegistered: false },
+    };
+  }
+
   private async resolveLegalName(
     classified: { kind: 'CNPJ' | 'CPF'; digits: string },
     providedName: string | null,
@@ -1042,6 +1287,35 @@ export class IntakeService {
         .map((company) => company.id),
     );
     return candidates.filter((item) => inOrganization.has(item.clientCompany.id));
+  }
+
+  // ── Identificadores novos na referência (docs/13, decisão 11) ─────
+
+  private async appendReferences(
+    processId: string,
+    actorId: string,
+    references: string[],
+    warnings: string[],
+  ): Promise<void> {
+    const current = await this.deps.processRepository.findRawById(processId, ALL);
+    if (!current) {
+      throw new NotFoundError('NOT_FOUND', 'Processo não encontrado.');
+    }
+    let reference = current.reference;
+    const lowered = (): string => reference.toLowerCase();
+    for (const raw of references) {
+      const candidate = raw.trim();
+      if (candidate.length < 3 || lowered().includes(candidate.toLowerCase())) continue;
+      const next = `${reference} / ${candidate}`;
+      if (next.length > 255) {
+        warnings.push(`Referência cheia: "${candidate}" não coube em ${current.code}.`);
+        continue;
+      }
+      reference = next;
+    }
+    if (reference !== current.reference) {
+      await this.deps.processService.update(processId, actorId, ALL, { reference });
+    }
   }
 
   // ── Nota do e-mail em additionalInfo ──────────────────────────────

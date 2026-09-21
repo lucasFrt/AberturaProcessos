@@ -4,9 +4,11 @@ Prompt operacional do agente que lê a caixa de e-mail da trading e alimenta o s
 processos (docs/13). Pressupõe dois conectores/MCPs disponíveis na tarefa agendada:
 
 - **Outlook** (conector Microsoft 365): buscar e-mails, ler corpo/anexos.
-- **abertura-processos** (`mcp-server/`): `get_intake_cursor`, `advance_intake_cursor`,
-  `get_intake_event`, `lookup_process`, `create_process_from_email`, `attach_to_process`,
-  `skip_email`, `get_process`.
+- **abertura-processos** (`mcp-server/`): `list_mailbox`, `get_mailbox_message`,
+  `get_intake_cursor`, `advance_intake_cursor`, `get_intake_event`, `lookup_process`,
+  `create_process_from_email`, `attach_to_process`, `skip_email`, `get_process`. Com
+  `list_mailbox`/`get_mailbox_message` o conector de e-mail nem é necessário para ler — só para o
+  relatório.
 
 Este prompt é o irmão do `rotina-intake-claude-max.md` (mesmas regras, com ferramentas MCP em vez
 de `curl`). Desde a Tarefa 27 (docs/13, decisões 9 e 10) o estado de "o que já foi lido" vive na

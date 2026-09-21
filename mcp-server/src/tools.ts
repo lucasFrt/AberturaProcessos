@@ -99,7 +99,11 @@ function hintFor(code: string): string {
     case 'COMPANY_AMBIGUOUS':
       return 'O domínio do remetente tem mais de uma empresa. Escolha em details.candidates pela razão social/nome fantasia da assinatura e chame de novo com companyDocument = o cnpj dela; sem certeza, escale.';
     case 'COMPANY_REQUIRED':
-      return 'Remetente de webmail sem CNPJ no e-mail: não dá para identificar a empresa. Escale (skip_email com ESCALATED).';
+      return 'Não dá para identificar a empresa: remetente de webmail sem CNPJ, ou remetente terceiro sem companyName. Se o e-mail nomeia o cliente, chame de novo com companyName (e senderIsClient=false); senão escale (skip_email com ESCALATED).';
+    case 'MAIL_READ_DISABLED':
+      return 'O servidor não está configurado para ler a caixa (GRAPH_INTAKE_ENABLED=false). Use as ferramentas do conector de e-mail para listar e ler.';
+    case 'MAIL_UNAVAILABLE':
+      return 'O Microsoft Graph não respondeu. Tente uma vez mais após 30 s; persistindo, relate como problema de configuração.';
     case 'INTAKE_IN_PROGRESS':
       return 'Outra execução está processando esta mensagem. Não repita agora; siga para o próximo e-mail.';
     case 'MAIL_ATTACHMENTS_DISABLED':
@@ -197,6 +201,12 @@ export function registerTools(server: McpServer, api: ApiClient): void {
           .describe(
             'Razão social ou nome da empresa, como aparece no e-mail ou na assinatura. Usado se a Receita não responder, se for CPF, e como nome do cadastro pendente quando não há CNPJ.',
           ),
+        senderIsClient: z
+          .boolean()
+          .default(true)
+          .describe(
+            'false quando quem escreveu NÃO é o cliente (agente de carga, armador, despachante, terminal). Aí, sem CNPJ, a empresa é resolvida pelo companyName — nunca pelo domínio do remetente.',
+          ),
         requestingCompanyDocument: z
           .string()
           .optional()
@@ -229,7 +239,11 @@ export function registerTools(server: McpServer, api: ApiClient): void {
           receivedAt: toIso(input.receivedAt),
         },
         requester: { email: input.requesterEmail, name: input.requesterName ?? null },
-        company: { document: input.companyDocument ?? null, name: input.companyName ?? null },
+        company: {
+          document: input.companyDocument ?? null,
+          name: input.companyName ?? null,
+          senderIsClient: input.senderIsClient,
+        },
         requestingCompany: input.requestingCompanyDocument
           ? { document: input.requestingCompanyDocument, name: input.requestingCompanyName ?? null }
           : null,
@@ -274,6 +288,13 @@ export function registerTools(server: McpServer, api: ApiClient): void {
           .describe(
             'Informação relevante do corpo do e-mail para registrar no processo (será carimbada com remetente e data).',
           ),
+        addReferences: z
+          .array(z.string().min(3).max(100))
+          .max(10)
+          .optional()
+          .describe(
+            'Identificadores do embarque que este e-mail revelou e ainda não estão na referência do processo (HBL, contêiner, número do agente, PO): são acrescentados à referência para os próximos documentos casarem.',
+          ),
         ...attachmentFields,
       },
     },
@@ -290,6 +311,7 @@ export function registerTools(server: McpServer, api: ApiClient): void {
         processRef: input.processRef ?? null,
         processId: input.processId ?? null,
         note: input.note ?? null,
+        addReferences: input.addReferences ?? null,
         fetchAttachments: input.fetchAttachments,
       };
       const files = input.filePaths ?? [];
@@ -299,6 +321,55 @@ export function registerTools(server: McpServer, api: ApiClient): void {
           : await api.postJson('/intake/attachments', payload);
       return toToolResult(result);
     },
+  );
+
+  server.registerTool(
+    'list_mailbox',
+    {
+      title: 'Listar e-mails novos da caixa (pelo servidor)',
+      description:
+        'Lista a caixa de entrada a partir de um instante (o cursor), do mais antigo para o mais novo, já sem os remetentes bloqueados — lista enxuta: id, remetente, assunto, prévia, data, tem anexo. Use em vez da busca do conector. Devolve nextAfter (o receivedAt da última listada, bloqueada ou não — grave-o com advance_intake_cursor ao terminar a página) e hasMore.',
+      inputSchema: {
+        after: z
+          .string()
+          .min(1)
+          .describe(
+            'ISO 8601: só e-mails recebidos depois deste instante (o cursor menos 1 minuto).',
+          ),
+        limit: z.number().int().min(1).max(100).default(50),
+        excludeSenders: z
+          .array(z.string().min(1))
+          .default([])
+          .describe(
+            'Termos que, contidos no e-mail ou no nome do remetente, descartam a mensagem (ex.: "@opusce.com.br", "noreply").',
+          ),
+      },
+    },
+    async ({ after, limit, excludeSenders }) =>
+      toToolResult(
+        await api.get('/intake/mailbox/messages', {
+          after: toIso(after),
+          limit,
+          exclude: excludeSenders.join(','),
+        }),
+      ),
+  );
+
+  server.registerTool(
+    'get_mailbox_message',
+    {
+      title: 'Ler um e-mail (corpo limpo, pelo servidor)',
+      description:
+        'Corpo do e-mail em texto, sem histórico citado e limitado em tamanho, mais destinatários e a lista de anexos (nome, tipo, tamanho). Use em vez do read_resource do conector.',
+      inputSchema: {
+        messageId: externalIdField,
+        maxChars: z.number().int().min(500).max(50_000).default(6000),
+      },
+    },
+    async ({ messageId, maxChars }) =>
+      toToolResult(
+        await api.get(`/intake/mailbox/messages/${encodeURIComponent(messageId)}`, { maxChars }),
+      ),
   );
 
   server.registerTool(

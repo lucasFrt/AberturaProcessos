@@ -29,10 +29,14 @@ const companyRefSchema = z.object({
   name: z.string().trim().max(255).nullable().optional(),
 });
 
-/** Cliente sem documento no e-mail é resolvido pelo domínio do solicitante (docs/13, decisão 5). */
+/**
+ * Cliente sem documento no e-mail é resolvido pelo domínio do solicitante
+ * (docs/13, decisão 5) ou, quando o remetente é terceiro, pelo nome (decisão 11).
+ */
 const clientCompanyRefSchema = z.object({
   document: z.string().trim().min(11, 'CNPJ/CPF inválido.').max(20).nullable().optional(),
   name: z.string().trim().max(255).nullable().optional(),
+  senderIsClient: z.boolean().optional(),
 });
 
 export const intakeCreateProcessSchema = z.object({
@@ -53,6 +57,7 @@ export const intakeAttachSchema = z
     processRef: z.string().trim().min(1).max(255).nullable().optional(),
     processId: z.string().trim().min(1).nullable().optional(),
     note: z.string().max(10_000).nullable().optional(),
+    addReferences: z.array(z.string().trim().min(3).max(100)).max(10).nullable().optional(),
     fetchAttachments: z.boolean().default(false),
   })
   .refine((data) => Boolean(data.processRef) || Boolean(data.processId), {
@@ -86,6 +91,29 @@ export const intakeCursorQuerySchema = z.object({
   channel: z.enum(INTAKE_CHANNELS).default('EMAIL'),
 });
 export type IntakeCursorQuery = z.infer<typeof intakeCursorQuerySchema>;
+
+/** Listagem da caixa pelo servidor (docs/13, decisão 9). `exclude` = termos separados por vírgula. */
+export const intakeListMailboxQuerySchema = z.object({
+  after: z.coerce.date(),
+  limit: z.coerce.number().int().positive().max(100).default(50),
+  exclude: z
+    .string()
+    .max(2000)
+    .optional()
+    .transform((value) =>
+      (value ?? '')
+        .split(',')
+        .map((term) => term.trim().toLowerCase())
+        .filter((term) => term.length > 0),
+    ),
+});
+export type IntakeListMailboxQuery = z.infer<typeof intakeListMailboxQuerySchema>;
+
+export const intakeMailboxMessageParamsSchema = z.object({ id: z.string().min(1).max(400) });
+export const intakeMailboxMessageQuerySchema = z.object({
+  maxChars: z.coerce.number().int().positive().max(50_000).default(6000),
+});
+export type IntakeMailboxMessageQuery = z.infer<typeof intakeMailboxMessageQuerySchema>;
 
 export const intakeAdvanceCursorSchema = z.object({
   channel: z.enum(INTAKE_CHANNELS).default('EMAIL'),

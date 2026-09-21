@@ -7,6 +7,8 @@ import {
   presentIntakeCursor,
   presentIntakeEvent,
   presentIntakeResult,
+  presentListMailbox,
+  presentMailboxMessage,
   presentProcessMatch,
   presentSkipIntakeResult,
 } from '@/http/presenters/intake-presenter';
@@ -17,7 +19,9 @@ import type {
   IntakeCreateProcessBody,
   IntakeCursorQuery,
   IntakeListEventsQuery,
+  IntakeListMailboxQuery,
   IntakeLookupQuery,
+  IntakeMailboxMessageQuery,
   IntakeSkipBody,
 } from '@/http/schemas/intake-schemas';
 import type { IntakeService } from '@/services/intake-service';
@@ -77,6 +81,7 @@ export class IntakeController {
         processRef: body.processRef,
         processId: body.processId,
         note: body.note,
+        addReferences: body.addReferences,
         fetchAttachments: body.fetchAttachments,
         files: filesFromRequest(req),
       });
@@ -116,6 +121,43 @@ export class IntakeController {
       const query = req.query as unknown as IntakeCursorQuery;
       const cursor = await this.service.getCursor(query.channel);
       res.status(200).json(presentIntakeCursor(cursor));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  listMailbox = (req: Request, res: Response, next: NextFunction): void => {
+    void this.handleListMailbox(req, res, next);
+  };
+
+  private async handleListMailbox(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const query = req.query as unknown as IntakeListMailboxQuery;
+      const result = await this.service.listMailbox({
+        after: query.after,
+        limit: query.limit,
+        excludeSenders: query.exclude,
+      });
+      res.status(200).json(presentListMailbox(result));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  getMailboxMessage = (req: Request, res: Response, next: NextFunction): void => {
+    void this.handleGetMailboxMessage(req, res, next);
+  };
+
+  private async handleGetMailboxMessage(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      const { id } = req.params as { id: string };
+      const query = req.query as unknown as IntakeMailboxMessageQuery;
+      const message = await this.service.getMailboxMessage(id, query.maxChars);
+      res.status(200).json(presentMailboxMessage(message));
     } catch (error) {
       next(error);
     }
