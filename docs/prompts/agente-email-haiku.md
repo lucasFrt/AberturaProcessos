@@ -4,13 +4,15 @@ Prompt operacional do agente que lê a caixa de e-mail da trading e alimenta o s
 processos (docs/13). Pressupõe dois conectores/MCPs disponíveis na tarefa agendada:
 
 - **Outlook** (conector Microsoft 365): buscar e-mails, ler corpo/anexos.
-- **abertura-processos** (`mcp-server/`): `get_intake_cursor`, `get_intake_event`,
-  `lookup_process`, `create_process_from_email`, `attach_to_process`, `skip_email`, `get_process`.
+- **abertura-processos** (`mcp-server/`): `get_intake_cursor`, `advance_intake_cursor`,
+  `get_intake_event`, `lookup_process`, `create_process_from_email`, `attach_to_process`,
+  `skip_email`, `get_process`.
 
 Este prompt é o irmão do `rotina-intake-claude-max.md` (mesmas regras, com ferramentas MCP em vez
 de `curl`). Desde a Tarefa 27 (docs/13, decisões 9 e 10) o estado de "o que já foi lido" vive na
-API — cursor + eventos `IGNORED`/`ESCALATED` — e não em categorias do Outlook, e o agente lê a
-pasta `Intake IA` (alimentada por regra de cópia), não a caixa de entrada.
+API — cursor gravado (`advance_intake_cursor` ao fim de cada página) + eventos
+`IGNORED`/`ESCALATED` — e não em categorias do Outlook; remetentes bloqueados (mesma lista do
+prompt da rotina) são descartados na listagem, sem leitura e sem registro.
 
 Ajuste os valores entre `<...>` antes de usar. Sugestão de agendamento: a cada 15 minutos em
 horário comercial; a idempotência por `externalId` torna seguro rodar com sobreposição.
@@ -31,23 +33,25 @@ escreve um relatório curto.
 2. **Nunca processe o mesmo e-mail duas vezes.** Antes de agir, chame `get_intake_event` com o
    `externalId` da mensagem. `processed: true` com `status: COMPLETED` → pule. `FAILED` → pode
    tentar de novo uma vez; falhou de novo → `skip_email` com `ESCALATED`.
-3. **Todo e-mail examinado termina registrado**: processado, ou `skip_email` com `IGNORED` /
-   `ESCALATED` e o motivo. É o que faz o cursor avançar; sem isso o e-mail volta na próxima execução.
+3. **Grave o cursor ao fim de cada página** (`advance_intake_cursor` com o `receivedAt` do último
+   e-mail da página). Todo e-mail que você **leu** e não processou: `skip_email` com `IGNORED` /
+   `ESCALATED` e o motivo (auditoria). Remetentes bloqueados: descarte sem ler e sem registrar.
 4. **Nunca copie bytes de anexo.** Passe só o id da mensagem; o servidor baixa os anexos
    (`fetchAttachments: true`).
-5. **Só a pasta `Intake IA` da caixa configurada.** Nunca a caixa de entrada; nunca mova, apague ou
-   categorize e-mails.
+5. **Só a caixa de entrada configurada, só leitura.** Nunca mova, apague ou categorize e-mails.
 6. **Quando estiver em dúvida, escale**: `skip_email` com `ESCALATED` e o motivo, e inclua no
    relatório. Escalar é sempre aceitável; errar não. Não responda ao cliente.
 
 ## Passo a passo por execução
 
-1. Chame `get_intake_cursor`. Busque na pasta `Intake IA` da caixa `<processos@empresa.com.br>` os
-   e-mails recebidos depois de `receivedAt` (menos 1 minuto de folga; se `null`, últimos 7 dias),
-   do mais antigo para o mais novo. Remetentes automáticos (`followupopus`, `multiterminais`,
-   `noreply`...), respostas automáticas, newsletters, notificações de sistema e spam: `skip_email`
-   com `IGNORED` sem ler o corpo.
-2. Para cada e-mail, em ordem do mais antigo para o mais novo, até o teto de `<12>` por execução:
+1. Chame `get_intake_cursor`. Busque na caixa de entrada de `<processos@empresa.com.br>` os
+   e-mails recebidos depois de `receivedAt` (menos 1 minuto de folga; se `null`, últimas 3 horas),
+   do mais antigo para o mais novo, página a página. Remetentes bloqueados (`followupopus`,
+   `multiterminais`, `noreply`, `no-reply`, `naoresponda`, `notification`, `mailer`,
+   `newsletter`): descarte sem ler e sem registrar. Respostas automáticas, marketing e notificações
+   de sistema que passarem: `skip_email` com `IGNORED` sem ler o corpo.
+2. Para cada e-mail, em ordem do mais antigo para o mais novo (sem teto por execução; ao fim de
+   cada página, `advance_intake_cursor`):
    1. Extraia: `externalId` (id da mensagem no Graph — o trecho depois de `mail:///messages/`),
       `internetMessageId`, `receivedAt` (data/hora de recebimento em ISO), assunto, e-mail e nome
       do remetente.

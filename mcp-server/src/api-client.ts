@@ -64,6 +64,14 @@ export class ApiClient {
     });
   }
 
+  async put<T>(route: string, body: unknown): Promise<ApiResult<T>> {
+    return this.request<T>(`${this.config.baseUrl}${route}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
   /**
    * `multipart/form-data` com o JSON no campo `payload` e cada arquivo em
    * `files` (docs/05, "Intake"). Lê os arquivos do disco local — é o modo

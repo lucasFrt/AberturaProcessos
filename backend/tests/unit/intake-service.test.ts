@@ -4,6 +4,7 @@ import { FakeStorageProvider } from '../helpers/fakes/fake-storage-provider';
 import { InMemoryCompanyRepository } from '../helpers/fakes/in-memory-company-repository';
 import { InMemoryDocumentRepository } from '../helpers/fakes/in-memory-document-repository';
 import { InMemoryEmailDomainRepository } from '../helpers/fakes/in-memory-email-domain-repository';
+import { InMemoryIntakeCursorRepository } from '../helpers/fakes/in-memory-intake-cursor-repository';
 import { InMemoryIntakeEventRepository } from '../helpers/fakes/in-memory-intake-event-repository';
 import { InMemoryKanbanStageRepository } from '../helpers/fakes/in-memory-kanban-stage-repository';
 import { InMemoryOrganizationRepository } from '../helpers/fakes/in-memory-organization-repository';
@@ -26,6 +27,7 @@ const RECEIVED_AT = new Date('2026-09-18T13:32:00.000Z');
 interface Context {
   service: IntakeService;
   intakeEventRepository: InMemoryIntakeEventRepository;
+  intakeCursorRepository: InMemoryIntakeCursorRepository;
   processRepository: InMemoryProcessRepository;
   companyRepository: InMemoryCompanyRepository;
   organizationRepository: InMemoryOrganizationRepository;
@@ -40,6 +42,7 @@ async function buildContext(
   overrides: { cnpjLookup?: boolean; mailAttachments?: boolean } = {},
 ): Promise<Context> {
   const intakeEventRepository = new InMemoryIntakeEventRepository();
+  const intakeCursorRepository = new InMemoryIntakeCursorRepository();
   const processRepository = new InMemoryProcessRepository();
   const companyRepository = new InMemoryCompanyRepository();
   const organizationRepository = new InMemoryOrganizationRepository();
@@ -90,6 +93,7 @@ async function buildContext(
 
   const service = new IntakeService({
     intakeEventRepository,
+    intakeCursorRepository,
     processRepository,
     companyRepository,
     organizationRepository,
@@ -104,6 +108,7 @@ async function buildContext(
   return {
     service,
     intakeEventRepository,
+    intakeCursorRepository,
     processRepository,
     companyRepository,
     organizationRepository,
@@ -1069,14 +1074,15 @@ describe('IntakeService (docs/13)', () => {
       expect(ctx.processRepository.items).toHaveLength(1);
     });
 
-    it('cursor é o receivedAt do último examinado (COMPLETED ou FAILED); PROCESSING não conta', async () => {
+    it('sem ponteiro gravado, o cursor é deduzido do último examinado (COMPLETED ou FAILED); PROCESSING não conta', async () => {
       const ctx = await buildContext();
       await seedCompany(ctx, VALID_CNPJ, ctx.clientOrganizationId);
 
       expect(await ctx.service.getCursor('EMAIL')).toEqual({
         channel: 'EMAIL',
         receivedAt: null,
-        event: null,
+        externalId: null,
+        source: 'NONE',
       });
 
       const t1 = new Date('2026-09-21T10:00:00.000Z');
@@ -1117,9 +1123,50 @@ describe('IntakeService (docs/13)', () => {
       });
 
       const cursor = await ctx.service.getCursor('EMAIL');
-      expect(cursor.receivedAt).toEqual(t3);
-      expect(cursor.event?.externalId).toBe('c');
-      expect(cursor.event?.status).toBe('FAILED');
+      expect(cursor).toEqual({
+        channel: 'EMAIL',
+        receivedAt: t3,
+        externalId: 'c',
+        source: 'EVENTS',
+      });
+    });
+
+    it('ponteiro gravado vale sobre os eventos e só anda para a frente', async () => {
+      const ctx = await buildContext();
+      const t1 = new Date('2026-09-21T10:00:00.000Z');
+      const t2 = new Date('2026-09-21T11:00:00.000Z');
+      const t3 = new Date('2026-09-21T12:00:00.000Z');
+
+      // Evento mais novo que o ponteiro não "puxa" o cursor: o agente é quem avança.
+      await ctx.service.skipEmail(ACTOR, {
+        source: { channel: 'EMAIL', externalId: 'novo', receivedAt: t3 },
+        outcome: 'IGNORED',
+        reason: 'Ruído.',
+      });
+      const first = await ctx.service.advanceCursor({
+        channel: 'EMAIL',
+        receivedAt: t2,
+        externalId: 'pagina-1',
+      });
+      expect(first.advanced).toBe(true);
+      expect(await ctx.service.getCursor('EMAIL')).toEqual({
+        channel: 'EMAIL',
+        receivedAt: t2,
+        externalId: 'pagina-1',
+        source: 'STORED',
+      });
+
+      // Valor mais antigo (execução atrasada) é ignorado.
+      const stale = await ctx.service.advanceCursor({ channel: 'EMAIL', receivedAt: t1 });
+      expect(stale.advanced).toBe(false);
+      expect(stale.cursor.receivedAt).toEqual(t2);
+
+      const same = await ctx.service.advanceCursor({ channel: 'EMAIL', receivedAt: t2 });
+      expect(same.advanced).toBe(false);
+
+      const forward = await ctx.service.advanceCursor({ channel: 'EMAIL', receivedAt: t3 });
+      expect(forward.advanced).toBe(true);
+      expect(forward.cursor.externalId).toBeNull();
     });
   });
 });

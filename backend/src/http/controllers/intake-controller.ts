@@ -3,6 +3,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { UnauthenticatedError } from '@/domain/errors/app-error';
 import { filesFromRequest } from '@/http/controllers/document-controller';
 import {
+  presentAdvanceCursor,
   presentIntakeCursor,
   presentIntakeEvent,
   presentIntakeResult,
@@ -11,6 +12,7 @@ import {
 } from '@/http/presenters/intake-presenter';
 import { presentCollection } from '@/http/presenters/pagination-presenter';
 import type {
+  IntakeAdvanceCursorBody,
   IntakeAttachBody,
   IntakeCreateProcessBody,
   IntakeCursorQuery,
@@ -114,6 +116,28 @@ export class IntakeController {
       const query = req.query as unknown as IntakeCursorQuery;
       const cursor = await this.service.getCursor(query.channel);
       res.status(200).json(presentIntakeCursor(cursor));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  advanceCursor = (req: Request, res: Response, next: NextFunction): void => {
+    void this.handleAdvanceCursor(req, res, next);
+  };
+
+  private async handleAdvanceCursor(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      const body = req.body as IntakeAdvanceCursorBody;
+      const result = await this.service.advanceCursor({
+        channel: body.channel,
+        receivedAt: body.receivedAt,
+        externalId: body.externalId,
+      });
+      res.status(200).json(presentAdvanceCursor(result));
     } catch (error) {
       next(error);
     }

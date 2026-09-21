@@ -28,6 +28,7 @@ test('lista as ferramentas do intake com seus campos obrigatórios', async () =>
     const { tools } = await client.listTools();
     const names = tools.map((tool) => tool.name).sort();
     assert.deepEqual(names, [
+      'advance_intake_cursor',
       'attach_to_process',
       'create_process_from_email',
       'get_intake_cursor',

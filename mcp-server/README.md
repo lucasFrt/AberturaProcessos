@@ -9,12 +9,13 @@ negócio vive aqui.
 
 | Ferramenta | Rota | Quando o agente usa |
 | --- | --- | --- |
-| `get_intake_cursor` | `GET /intake/cursor` | No início: a partir de que `receivedAt` ler a pasta de intake. |
+| `get_intake_cursor` | `GET /intake/cursor` | No início: a partir de que `receivedAt` ler a caixa. |
+| `advance_intake_cursor` | `PUT /intake/cursor` | Ao fim de cada página examinada: grava até onde a leitura chegou (remetentes bloqueados passam sem `skip_email`). |
 | `get_intake_event` | `GET /intake/events?externalId=` | Antes de tratar um e-mail: já foi processado? |
 | `lookup_process` | `GET /intake/processes/lookup` | E-mail parece complemento: confirmar qual processo. |
 | `create_process_from_email` | `POST /intake/processes` | E-mail é uma solicitação nova. |
 | `attach_to_process` | `POST /intake/attachments` | "Processo X, documento em anexo". |
-| `skip_email` | `POST /intake/events/skip` | E-mail examinado que não vira processo (IGNORED/ESCALATED) — faz o cursor avançar. |
+| `skip_email` | `POST /intake/events/skip` | E-mail examinado que não vira processo (IGNORED/ESCALATED), com o motivo, para auditoria. |
 | `get_process` | `GET /processes/:id` | Conferir o resultado antes de relatar/responder. |
 
 Erros de negócio (404 com candidatos, 409 ambíguo, 503 Graph desligado) **não** são erros de

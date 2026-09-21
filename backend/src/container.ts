@@ -22,6 +22,7 @@ import { PrismaCompanyRepository } from '@/infra/prisma/repositories/prisma-comp
 import { PrismaDashboardRepository } from '@/infra/prisma/repositories/prisma-dashboard-repository';
 import { PrismaDocumentRepository } from '@/infra/prisma/repositories/prisma-document-repository';
 import { PrismaEmailDomainRepository } from '@/infra/prisma/repositories/prisma-email-domain-repository';
+import { PrismaIntakeCursorRepository } from '@/infra/prisma/repositories/prisma-intake-cursor-repository';
 import { PrismaIntakeEventRepository } from '@/infra/prisma/repositories/prisma-intake-event-repository';
 import { PrismaKanbanStageRepository } from '@/infra/prisma/repositories/prisma-kanban-stage-repository';
 import { PrismaOrganizationRepository } from '@/infra/prisma/repositories/prisma-organization-repository';
@@ -100,6 +101,7 @@ export function buildContainer(prisma: PrismaClient): Container {
   const dashboardRepository = new PrismaDashboardRepository(prisma);
   const apiKeyRepository = new PrismaApiKeyRepository(prisma);
   const intakeEventRepository = new PrismaIntakeEventRepository(prisma);
+  const intakeCursorRepository = new PrismaIntakeCursorRepository(prisma);
 
   const passwordHasher = new BcryptPasswordHasher();
   const tokenService = new JwtTokenService();
@@ -248,6 +250,7 @@ export function buildContainer(prisma: PrismaClient): Container {
 
   const intakeService = new IntakeService({
     intakeEventRepository,
+    intakeCursorRepository,
     processRepository,
     companyRepository,
     organizationRepository,

@@ -87,6 +87,13 @@ export const intakeCursorQuerySchema = z.object({
 });
 export type IntakeCursorQuery = z.infer<typeof intakeCursorQuerySchema>;
 
+export const intakeAdvanceCursorSchema = z.object({
+  channel: z.enum(INTAKE_CHANNELS).default('EMAIL'),
+  receivedAt: z.coerce.date(),
+  externalId: z.string().trim().min(1).max(400).nullable().optional(),
+});
+export type IntakeAdvanceCursorBody = z.infer<typeof intakeAdvanceCursorSchema>;
+
 export const intakeListEventsQuerySchema = paginationQuerySchema.extend({
   externalId: z.string().trim().min(1).max(400).optional(),
   internetMessageId: z.string().trim().min(1).max(400).optional(),

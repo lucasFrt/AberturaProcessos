@@ -311,6 +311,20 @@ model IntakeEvent {
   @@map("intake_events")
 }
 
+/// Ponteiro de leitura da caixa por canal (docs/13, decisão 9): o agente
+/// avança `receivedAt` a cada página examinada, e os e-mails de remetentes
+/// bloqueados passam sem gerar IntakeEvent. Uma linha por canal.
+model IntakeCursor {
+  /// EMAIL
+  channel    String   @id @db.NVarChar(20)
+  receivedAt DateTime
+  /// id da última mensagem examinada, só para diagnóstico
+  externalId String?  @db.NVarChar(400)
+  updatedAt  DateTime @updatedAt
+
+  @@map("intake_cursors")
+}
+
 /// Trilha de auditoria append-only.
 model ProcessHistory {
   id          String   @id @default(cuid()) @db.NVarChar(30)

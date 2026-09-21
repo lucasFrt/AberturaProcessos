@@ -10,6 +10,7 @@ import type { UploadMiddlewareConfig } from '@/http/middlewares/upload';
 import { buildUploadMiddleware } from '@/http/middlewares/upload';
 import { validate } from '@/http/middlewares/validate';
 import {
+  intakeAdvanceCursorSchema,
   intakeAttachSchema,
   intakeCreateProcessSchema,
   intakeCursorQuerySchema,
@@ -66,6 +67,7 @@ export function buildIntakeRouter(
 
   // Cursor e descarte/escalada (docs/13, decisão 9): JSON puro, sem multipart.
   router.get('/cursor', validate({ query: intakeCursorQuerySchema }), controller.cursor);
+  router.put('/cursor', validate({ body: intakeAdvanceCursorSchema }), controller.advanceCursor);
   router.post('/events/skip', validate({ body: intakeSkipSchema }), controller.skip);
 
   return router;

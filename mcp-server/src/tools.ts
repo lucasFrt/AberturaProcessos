@@ -313,6 +313,30 @@ export function registerTools(server: McpServer, api: ApiClient): void {
   );
 
   server.registerTool(
+    'advance_intake_cursor',
+    {
+      title: 'Gravar até onde a leitura chegou',
+      description:
+        'Grava o receivedAt do último e-mail examinado da página atual (chame ao terminar cada página da busca). A próxima execução começa dali. E-mails de remetentes bloqueados não precisam de skip_email: basta o cursor passar por eles. Só anda para a frente: um valor mais antigo que o gravado é ignorado (advanced=false).',
+      inputSchema: {
+        receivedAt: receivedAtField,
+        externalId: z
+          .string()
+          .optional()
+          .describe('Id da última mensagem examinada (só para diagnóstico).'),
+      },
+    },
+    async ({ receivedAt, externalId }) =>
+      toToolResult(
+        await api.put('/intake/cursor', {
+          channel: 'EMAIL',
+          receivedAt: toIso(receivedAt),
+          externalId: externalId ?? null,
+        }),
+      ),
+  );
+
+  server.registerTool(
     'skip_email',
     {
       title: 'Registrar e-mail ignorado ou escalado',

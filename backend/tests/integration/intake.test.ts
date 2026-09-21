@@ -572,7 +572,12 @@ describe('Intake por e-mail — integração (docs/13)', () => {
     it('cursor começa nulo; skip registra IGNORED/ESCALATED e o cursor segue o último examinado', async () => {
       const empty = await request(app).get(`${INTAKE_BASE}/cursor`).set('X-Api-Key', apiKey);
       expect(empty.status).toBe(200);
-      expect(empty.body).toEqual({ channel: 'EMAIL', receivedAt: null, event: null });
+      expect(empty.body).toEqual({
+        channel: 'EMAIL',
+        receivedAt: null,
+        externalId: null,
+        source: 'NONE',
+      });
 
       const skipped = await request(app)
         .post(`${INTAKE_BASE}/events/skip`)
@@ -639,12 +644,12 @@ describe('Intake por e-mail — integração (docs/13)', () => {
       expect(failed.status).toBe(404);
 
       const cursor = await request(app).get(`${INTAKE_BASE}/cursor`).set('X-Api-Key', apiKey);
-      const cursorBody = cursor.body as {
-        receivedAt: string;
-        event: { externalId: string; status: string };
-      };
-      expect(cursorBody.receivedAt).toBe('2026-09-21T13:00:00.000Z');
-      expect(cursorBody.event).toMatchObject({ externalId: 'msg-skip-2', status: 'FAILED' });
+      expect(cursor.body).toEqual({
+        channel: 'EMAIL',
+        receivedAt: '2026-09-21T13:00:00.000Z',
+        externalId: 'msg-skip-2',
+        source: 'EVENTS',
+      });
 
       const failedList = await request(app)
         .get(`${INTAKE_BASE}/events`)
@@ -674,8 +679,36 @@ describe('Intake por e-mail — integração (docs/13)', () => {
         status: 'COMPLETED',
       });
 
+      // Ponteiro gravado pelo agente passa a valer; valor mais antigo é ignorado.
+      const advanced = await request(app)
+        .put(`${INTAKE_BASE}/cursor`)
+        .set('X-Api-Key', apiKey)
+        .send({ receivedAt: '2026-09-21T14:00:00.000Z', externalId: 'msg-pagina-1' });
+      expect(advanced.status).toBe(200);
+      expect(advanced.body).toEqual({
+        advanced: true,
+        cursor: {
+          channel: 'EMAIL',
+          receivedAt: '2026-09-21T14:00:00.000Z',
+          externalId: 'msg-pagina-1',
+          source: 'STORED',
+        },
+      });
+      const stale = await request(app)
+        .put(`${INTAKE_BASE}/cursor`)
+        .set('X-Api-Key', apiKey)
+        .send({ receivedAt: '2026-09-21T09:00:00.000Z' });
+      expect((stale.body as { advanced: boolean }).advanced).toBe(false);
       const moved = await request(app).get(`${INTAKE_BASE}/cursor`).set('X-Api-Key', apiKey);
-      expect((moved.body as { event: { status: string } }).event.status).toBe('COMPLETED');
+      expect((moved.body as { receivedAt: string; source: string }).receivedAt).toBe(
+        '2026-09-21T14:00:00.000Z',
+      );
+      expect((moved.body as { source: string }).source).toBe('STORED');
+      const invalid = await request(app)
+        .put(`${INTAKE_BASE}/cursor`)
+        .set('X-Api-Key', apiKey)
+        .send({ receivedAt: 'ontem' });
+      expect(invalid.status).toBe(400);
       const noneFailed = await request(app)
         .get(`${INTAKE_BASE}/events`)
         .set('X-Api-Key', apiKey)

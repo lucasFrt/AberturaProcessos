@@ -3,6 +3,7 @@ import { calculateProcessPermissions } from '@/domain/entities/process-permissio
 import type { Role } from '@/domain/enums';
 import { presentProcessDetail, presentProcessListItem } from '@/http/presenters/process-presenter';
 import type {
+  AdvanceCursorResult,
   IntakeCursor,
   IntakeResult,
   ProcessMatch,
@@ -125,15 +126,26 @@ export function presentSkipIntakeResult(result: SkipIntakeResult): SkipIntakeRes
 interface IntakeCursorDto {
   channel: string;
   receivedAt: string | null;
-  event: IntakeEventDto | null;
+  externalId: string | null;
+  source: 'STORED' | 'EVENTS' | 'NONE';
 }
 
 export function presentIntakeCursor(cursor: IntakeCursor): IntakeCursorDto {
   return {
     channel: cursor.channel,
     receivedAt: cursor.receivedAt ? cursor.receivedAt.toISOString() : null,
-    event: cursor.event ? presentIntakeEvent(cursor.event) : null,
+    externalId: cursor.externalId,
+    source: cursor.source,
   };
+}
+
+interface AdvanceCursorDto {
+  advanced: boolean;
+  cursor: IntakeCursorDto;
+}
+
+export function presentAdvanceCursor(result: AdvanceCursorResult): AdvanceCursorDto {
+  return { advanced: result.advanced, cursor: presentIntakeCursor(result.cursor) };
 }
 
 interface ProcessMatchDto {

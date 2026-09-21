@@ -121,42 +121,44 @@ servidor MCP (stdio) com sete ferramentas — `get_intake_cursor`, `get_intake_e
 que só traduzem chamada de ferramenta em requisição HTTP com a chave de API. Zero regra de negócio
 ali. Se o orquestrador não suportar MCP local, a API continua utilizável diretamente (docs/05).
 
-### 9. A IA lê uma pasta alimentada por cópia, e sabe onde parou
+### 9. A IA lê a caixa de entrada, descarta remetentes bloqueados e sabe onde parou
 
 A caixa `opusoperacional@` recebe centenas de e-mails por dia — notificações de terminal,
-faturamento, follow-up de DUIMP, conversas internas. Ler a caixa de entrada com uma "janela das
-últimas N horas" não funciona: com o teto de e-mails por execução, o que não é examinado a tempo
-sai da janela e nunca mais é visto, e a cota da rotina vai embora em ruído (foi o que a primeira
-execução real mostrou: 240 e-mails em 3 h, 12 examinados).
+faturamento, follow-up de DUIMP, conversas internas. Ler a caixa com uma "janela das últimas N
+horas" não funciona: o que não é examinado a tempo sai da janela e nunca mais é visto (foi o que a
+primeira execução real mostrou: 240 e-mails em 3 h). E qualquer arranjo que dependa de alguém mexer
+na caixa (pasta, regra, categoria) foi descartado: a caixa é usada o dia inteiro pelo operacional e
+não pode ganhar ruído nem tarefa nova.
 
-A solução tem duas partes, e nenhuma mexe na caixa que o operacional usa:
+O desenho final tem três partes, todas do lado da IA e da API:
 
-1. **Pasta `Intake IA`, alimentada por uma regra de *cópia*** do Outlook na própria caixa. A regra
-   decide o que a IA vê e é onde o ruído é cortado (exceções por remetente: `followupopus`,
-   `multiterminais`, notificações de sistema...). É *copiar*, nunca *mover*: a caixa de entrada
-   fica intocada e ninguém do operacional percebe diferença. Nada é movido nem apagado depois — a
-   pasta só cresce.
-2. **Cursor na API**: como nada sai da pasta, a rotina precisa saber de onde continuar.
-   `GET /intake/cursor` devolve o `receivedAt` do último e-mail examinado, e a busca na pasta é
-   sempre "depois desse instante, mais antigos primeiro". Para o cursor passar também pelos e-mails
-   que **não** viram processo, todo e-mail examinado termina registrado: os descartados e os
-   escalados entram por `POST /intake/events/skip` como `IntakeEvent` de `kind` `IGNORED` ou
-   `ESCALATED` (`status = COMPLETED`, `result.reason` com o motivo). Ninguém é relido; nada é
-   perdido; a auditoria do que a IA decidiu fica no mesmo lugar que os processos criados.
+1. **Remetentes bloqueados no prompt.** O agente vê remetente, assunto e prévia na listagem do
+   conector; e-mails de remetentes da lista (`followupopus`, `multiterminais`, `noreply`...) são
+   descartados ali mesmo — sem abrir o corpo, sem chamada à API, sem evento. A lista mora no prompt
+   da rotina (e na cópia em `docs/prompts/`), editável sem deploy.
+2. **Cursor gravado na API.** `GET /intake/cursor` diz de onde continuar; ao terminar cada página
+   de 25 da busca (`order: oldest`), o agente grava `PUT /intake/cursor` com o `receivedAt` do
+   último e-mail da página — bloqueado ou não. A próxima execução começa dali (menos 1 minuto de
+   folga; a checagem de `externalId` cobre a borda). O ponteiro só anda para a frente; uma execução
+   atrasada não regride o cursor. Sem ponteiro gravado, a API deduz o cursor do último `IntakeEvent`
+   `COMPLETED`/`FAILED` — é o ponto de partida.
+3. **Eventos `IGNORED`/`ESCALATED` para o que foi lido.** Todo e-mail que o agente **leu** e não
+   processou entra por `POST /intake/events/skip` com o motivo: é a auditoria do que a IA decidiu
+   ("por que não abriu esse?"), no mesmo lugar dos processos criados. Ruído bloqueado não entra —
+   seria volume sem informação.
 
-O cursor conta `COMPLETED` e `FAILED` (último *examinado*), não só concluídos: a retentativa de um
-`FAILED` é um passo próprio da rotina (`GET /intake/events?status=FAILED`, uma tentativa; falhou de
-novo → `skip` com `ESCALATED`), e não a releitura pelo cursor — senão um e-mail que falha sempre
-travaria a fila atrás dele. `PROCESSING` não conta: pode ser uma execução interrompida no meio.
+Retentativa de `FAILED` é um passo próprio da rotina (`GET /intake/events?status=FAILED`, uma
+tentativa; falhou de novo → `skip` com `ESCALATED`), não a releitura pelo cursor — senão um e-mail
+que falha sempre travaria a fila atrás dele.
 
-Copiar (em vez de mover) tem uma consequência prática que o backend já cobre: a cópia na pasta tem
-**outro id do Graph** que o original, mas o mesmo `internetMessageId` — a chave secundária de
-idempotência (docs/14) — então um e-mail já tratado pelo original nunca é reprocessado pela cópia, e
-vice-versa. E o backend baixa os anexos pelo id da cópia normalmente (mesma caixa).
+Não há teto de e-mails por execução: o modelo é o Haiku 4.5 (barato e rápido) e a rotina pagina
+até esgotar o que chegou desde o cursor. A única salvaguarda é de tempo (40 min → grava o cursor
+da última página completa e para). Se a cota do Max apertar, o próximo passo é o plano de API.
 
-Esta decisão substitui a ideia anterior de "mover o e-mail processado para `Processos IA/<código>`":
-mover exigiria `Mail.ReadWrite` de aplicação e mexeria na caixa em uso. Se um dia fizer sentido
-organizar por processo, que seja por *cópia* também.
+A alternativa "pasta `Intake IA` alimentada por regra de cópia do Outlook" (filtrar o ruído antes
+da IA, sem mexer na caixa de entrada) continua válida e o backend não a impede — o cursor funciona
+em qualquer pasta —, mas foi preterida por exigir configuração na caixa. Mover e-mails processados
+(`Processos IA/<código>`) foi descartado de vez: exigiria `Mail.ReadWrite` e mexeria na caixa em uso.
 
 ### 10. Sem CNPJ no e-mail, a empresa vem do domínio — e nasce "pendente" se preciso
 
@@ -197,9 +199,9 @@ sequenceDiagram
     A->>M: get_intake_cursor()
     M->>API: GET /intake/cursor
     API-->>A: { receivedAt } (de onde continuar; null na primeira vez)
-    A->>O: buscar na pasta "Intake IA" e-mails depois do cursor, mais antigos primeiro
-    O-->>A: lista com messageId, remetente, assunto, corpo
-    loop cada e-mail (até o teto por execução)
+    A->>O: listar a caixa de entrada depois do cursor, mais antigos primeiro (páginas de 25)
+    O-->>A: lista com messageId, remetente, assunto, prévia
+    loop cada e-mail (remetente bloqueado → descarta sem ler)
         A->>M: get_intake_event(externalId)
         M->>API: GET /intake/events?externalId=...
         API-->>A: 200 { data: [] } (não processado) / 200 com evento COMPLETED (já processado → pula)
@@ -217,9 +219,11 @@ sequenceDiagram
         else ignorar / escalar
             A->>M: skip_email({outcome: IGNORED | ESCALATED, reason})
             M->>API: POST /intake/events/skip
-            API-->>A: 201 { event } (o cursor passa a incluir este e-mail)
+            API-->>A: 201 { event }
         end
     end
+    A->>M: advance_intake_cursor(receivedAt do último da página)
+    M->>API: PUT /intake/cursor
     A->>O: enviar relatório da execução para a caixa operacional
 ```
 
@@ -236,8 +240,9 @@ Detalhe completo em `docs/05-contrato-api.md`, seção "Intake (alimentação po
 | `POST` | `/intake/processes` | OPERATIONAL, ADMIN | Abre processo a partir de um e-mail (JSON ou multipart com `payload` + `files`). |
 | `POST` | `/intake/attachments` | OPERATIONAL, ADMIN | Anexa documentos/nota a processo existente por `processRef` ou `processId`. |
 | `GET` | `/intake/events` | OPERATIONAL, ADMIN | Eventos de intake; filtro `externalId` para checar idempotência, `status=FAILED` para retentativas, `kind=ESCALATED` para auditoria. |
-| `GET` | `/intake/cursor` | OPERATIONAL, ADMIN | `receivedAt` do último e-mail examinado — de onde a próxima execução continua (decisão 9). |
-| `POST` | `/intake/events/skip` | OPERATIONAL, ADMIN | Registra e-mail IGNORED/ESCALATED para o cursor avançar (decisão 9). |
+| `GET` | `/intake/cursor` | OPERATIONAL, ADMIN | De onde a próxima execução continua a leitura da caixa (decisão 9). |
+| `PUT` | `/intake/cursor` | OPERATIONAL, ADMIN | Grava até onde a leitura chegou (fim de cada página); só anda para a frente. |
+| `POST` | `/intake/events/skip` | OPERATIONAL, ADMIN | Registra e-mail lido e não processado (IGNORED/ESCALATED) com o motivo (decisão 9). |
 
 ## Configuração
 
@@ -276,23 +281,12 @@ Test-ServicePrincipalAuthorization -Identity <ObjectId-do-Enterprise-App> -Resou
    idempotência e o backend o usa para reencontrar a mensagem no Graph quando o id original não
    responde mais (docs/05, "Intake").
 
-### Pasta `Intake IA` e regra de cópia (decisão 9)
+### Remetentes bloqueados (decisão 9)
 
-Na caixa `opusoperacional@opusce.com.br`, por quem tem *Full Access* nela (Outlook Web →
-abrir a caixa compartilhada → Configurações → E-mail → Regras), ou pelo Exchange PowerShell:
-
-```powershell
-# Pasta e regra de CÓPIA (nunca mover). Exceções = remetentes automáticos que a IA não deve ver.
-New-MailboxFolder -Parent "opusoperacional@opusce.com.br:\" -Name "Intake IA"
-New-InboxRule -Mailbox opusoperacional@opusce.com.br -Name "Intake IA" `
-  -CopyToFolder "opusoperacional@opusce.com.br:\Intake IA" `
-  -ExceptIfFromAddressContainsWords "followupopus","multiterminais","noreply","no-reply","naoresponda"
-```
-
-Ajuste a lista de exceções conforme o ruído aparecer nos relatórios (os e-mails que a IA registra
-como `IGNORED` em `GET /intake/events?kind=IGNORED` mostram o que ainda está passando). A regra só
-vale para e-mails novos; para testar com um e-mail antigo, copie-o à mão para a pasta (Ctrl+arrastar
-no Outlook, ou "Copiar para").
+A lista vive na seção "Remetentes bloqueados" do prompt da rotina
+(`docs/prompts/rotina-intake-claude-max.md`) e na cópia publicada em claude.ai/code/routines — as
+duas têm de ficar iguais. Para descobrir o que ainda está passando, `GET /intake/events?kind=IGNORED`
+lista o que a IA leu e descartou, com o motivo; remetentes recorrentes ali vão para a lista.
 
 ### O agente
 
@@ -314,7 +308,8 @@ O estudo de viabilidade que fundamenta essa divisão (restrições da plataforma
   conector de Outlook, usando a resposta da API — não é responsabilidade do backend.
 - Classificação do e-mail (novo × complemento × ruído). É trabalho do modelo, guiado pelo prompt; a
   API só oferece `lookup` para ele conferir antes de decidir — e `skip` para registrar a decisão.
-- Filtrar ruído antes da IA. É a regra de cópia do Outlook (decisão 9), mantida pelo operacional.
+- Filtrar ruído antes da IA. É a lista de remetentes bloqueados do prompt (decisão 9); o backend
+  não a conhece.
 - Fila assíncrona para o intake. O agente espera a resposta síncrona (segundos) e precisa dela para
   relatar; se um dia o volume exigir, `POST /intake/processes` pode passar a enfileirar e responder
   `202` com o `IntakeEvent` para consulta — o modelo de evento já comporta isso.

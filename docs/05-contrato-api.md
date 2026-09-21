@@ -634,22 +634,40 @@ operacional auditar o que a IA fez (`kind=ESCALATED` = o que ficou para uma pess
 
 ### `GET /intake/cursor`
 
-De onde a próxima execução do agente continua a leitura da pasta de intake (docs/13, decisão 9).
-Query: `channel` (padrão `EMAIL`).
+De onde a próxima execução do agente continua a leitura da caixa (docs/13, decisão 9). Query:
+`channel` (padrão `EMAIL`).
 
 ```json
-{ "channel": "EMAIL", "receivedAt": "2026-09-21T15:33:40.000Z", "event": { "...": "evento com o maior receivedAt entre COMPLETED e FAILED" } }
+{ "channel": "EMAIL", "receivedAt": "2026-09-21T15:33:40.000Z", "externalId": "AAMkAGI2...", "source": "STORED" }
 ```
 
-`receivedAt` é o `source.receivedAt` do **último e-mail examinado** — concluído (`COMPLETED`,
-inclusive `IGNORED`/`ESCALATED`) ou com tentativa falha (`FAILED`); `null` antes do primeiro.
-`PROCESSING` não conta (pode ser uma execução interrompida). A retentativa de `FAILED` não é pelo
-cursor, e sim por `GET /intake/events?status=FAILED`.
+`source`: `STORED` = ponteiro gravado pelo agente (`PUT /intake/cursor`, o normal); `EVENTS` =
+sem ponteiro gravado, deduzido do `receivedAt` do último `IntakeEvent` `COMPLETED`/`FAILED`
+(`PROCESSING` não conta — pode ser execução interrompida); `NONE` = nada ainda (`receivedAt: null`).
+A retentativa de `FAILED` não é pelo cursor, e sim por `GET /intake/events?status=FAILED`.
+
+### `PUT /intake/cursor`
+
+Grava até onde a leitura chegou. O agente chama ao terminar cada página da busca, com o
+`receivedDateTime` do último e-mail da página — inclusive quando esse e-mail é de remetente
+bloqueado, que não gera evento nenhum.
+
+```json
+{ "channel": "EMAIL", "receivedAt": "2026-09-21T16:05:12.000Z", "externalId": "AAMkAGI2..." }
+```
+
+`200` com `{ "advanced": true, "cursor": { ... } }`. **Só anda para a frente**: um `receivedAt`
+menor ou igual ao gravado responde `advanced: false` com o cursor atual, sem alterar nada — protege
+de uma execução atrasada gravar por cima de uma mais nova. O valor deduzido dos eventos (`source:
+EVENTS`) não entra nessa comparação; é só o ponto de partida antes da primeira gravação. Rebobinar
+de propósito é operação direta no banco (`intake_cursors`).
 
 ### `POST /intake/events/skip`
 
-Registra um e-mail examinado que **não** vira processo, para o cursor avançar por ele (docs/13,
-decisão 9). Idempotente pelas mesmas chaves dos demais (`externalId`, `internetMessageId`).
+Registra um e-mail que o agente **leu** e decidiu não processar, com o motivo, para auditoria
+(docs/13, decisão 9). Idempotente pelas mesmas chaves dos demais (`externalId`,
+`internetMessageId`). Remetentes bloqueados não passam por aqui — são descartados na listagem e o
+cursor passa por eles.
 
 ```json
 {
@@ -660,8 +678,9 @@ decisão 9). Idempotente pelas mesmas chaves dos demais (`externalId`, `internet
 }
 ```
 
-`outcome`: `IGNORED` (ruído descartado) ou `ESCALATED` (precisa de uma pessoa). `requester` é
-opcional. `201` com `{ duplicate: false, event }` — o evento fica `kind = outcome`,
+`outcome`: `IGNORED` (não é pedido: conversa, cobrança, notificação que passou pela lista) ou
+`ESCALATED` (precisa de uma pessoa). `requester` é opcional. `201` com `{ duplicate: false, event }`
+— o evento fica `kind = outcome`,
 `status = COMPLETED`, `processId = null` e `result.reason` com o motivo. Regras:
 
 - mensagem já `COMPLETED` (processo criado/complementado ou já pulada) → `200` com

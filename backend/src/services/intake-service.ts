@@ -17,6 +17,7 @@ import type { MailAttachmentProvider } from '@/domain/mail/mail-attachment-provi
 import type { Page, PaginationParams } from '@/domain/pagination';
 import type { CompanyRepository } from '@/domain/repositories/company-repository';
 import type { EmailDomainRepository } from '@/domain/repositories/email-domain-repository';
+import type { IntakeCursorRepository } from '@/domain/repositories/intake-cursor-repository';
 import type { IntakeEventRepository } from '@/domain/repositories/intake-event-repository';
 import type { OrganizationRepository } from '@/domain/repositories/organization-repository';
 import type { ProcessRepository } from '@/domain/repositories/process-repository';
@@ -26,6 +27,7 @@ import { classifyDocument, formatDocument, normalizeCnpjDigits } from '@/shared/
 
 export interface IntakeServiceDeps {
   intakeEventRepository: IntakeEventRepository;
+  intakeCursorRepository: IntakeCursorRepository;
   processRepository: ProcessRepository;
   companyRepository: CompanyRepository;
   organizationRepository: OrganizationRepository;
@@ -124,9 +126,24 @@ export interface SkipIntakeResult {
 /** Ponto de onde a próxima execução do agente continua a leitura (docs/13, decisão 9). */
 export interface IntakeCursor {
   channel: IntakeChannel;
-  /** `receivedAt` do último e-mail examinado (COMPLETED ou FAILED); `null` antes do primeiro. */
+  /** `receivedAt` do último e-mail examinado; `null` antes do primeiro. */
   receivedAt: Date | null;
-  event: IntakeEvent | null;
+  /** id da última mensagem examinada, quando conhecido. */
+  externalId: string | null;
+  /** `STORED` = gravado pelo agente (`advanceCursor`); `EVENTS` = deduzido dos eventos; `NONE`. */
+  source: 'STORED' | 'EVENTS' | 'NONE';
+}
+
+export interface AdvanceCursorInput {
+  channel: IntakeChannel;
+  receivedAt: Date;
+  externalId?: string | null | undefined;
+}
+
+export interface AdvanceCursorResult {
+  cursor: IntakeCursor;
+  /** `false` quando o valor informado era mais antigo que o atual (ignorado). */
+  advanced: boolean;
 }
 
 export type ProcessMatchKind = 'CODE' | 'REFERENCE' | 'PARTIAL';
@@ -453,19 +470,73 @@ export class IntakeService {
   }
 
   /**
-   * Cursor de leitura (docs/13, decisão 9): a rotina busca na pasta de
-   * intake só o que chegou depois do `receivedAt` do último e-mail
-   * examinado (COMPLETED ou FAILED). FAILED conta porque a retentativa
-   * não é pelo cursor — é pela lista `status=FAILED`, que a rotina relê a
-   * cada execução até concluir ou escalar cada um. PROCESSING não conta:
-   * pode ser uma execução interrompida no meio.
+   * Cursor de leitura (docs/13, decisão 9): a rotina lista a caixa só a
+   * partir daqui. Vale o ponteiro gravado por `advanceCursor` (o agente
+   * avança a cada página, e remetentes bloqueados passam sem evento); sem
+   * ponteiro gravado, deduz do último evento COMPLETED/FAILED — o que
+   * havia antes de o cursor ser persistido. A retentativa de FAILED não é
+   * pelo cursor, e sim pela lista `status=FAILED`.
    */
   async getCursor(channel: IntakeChannel): Promise<IntakeCursor> {
+    const stored = await this.deps.intakeCursorRepository.get(channel);
+    if (stored) {
+      return {
+        channel,
+        receivedAt: stored.receivedAt,
+        externalId: stored.externalId,
+        source: 'STORED',
+      };
+    }
     const event = await this.deps.intakeEventRepository.findLatestReceived(channel, [
       'COMPLETED',
       'FAILED',
     ]);
-    return { channel, receivedAt: event?.receivedAt ?? null, event };
+    if (event?.receivedAt) {
+      return {
+        channel,
+        receivedAt: event.receivedAt,
+        externalId: event.externalId,
+        source: 'EVENTS',
+      };
+    }
+    return { channel, receivedAt: null, externalId: null, source: 'NONE' };
+  }
+
+  /**
+   * Avança o ponteiro. Monotônico em relação ao ponteiro **gravado**: um
+   * valor mais antigo é ignorado (`advanced: false`) — protege de uma
+   * execução atrasada gravar por cima de uma mais nova. O valor deduzido
+   * dos eventos não entra na comparação: é só o ponto de partida antes da
+   * primeira gravação. Rebobinar de propósito é operação de administração
+   * direta no banco, não da API.
+   */
+  async advanceCursor(input: AdvanceCursorInput): Promise<AdvanceCursorResult> {
+    const current = await this.deps.intakeCursorRepository.get(input.channel);
+    if (current && input.receivedAt.getTime() <= current.receivedAt.getTime()) {
+      return {
+        cursor: {
+          channel: input.channel,
+          receivedAt: current.receivedAt,
+          externalId: current.externalId,
+          source: 'STORED',
+        },
+        advanced: false,
+      };
+    }
+    const stored = await this.deps.intakeCursorRepository.set(
+      input.channel,
+      input.receivedAt,
+      input.externalId ?? null,
+    );
+    return {
+      cursor: {
+        channel: input.channel,
+        receivedAt: stored.receivedAt,
+        externalId: stored.externalId,
+        source: 'STORED',
+      },
+      advanced: true,
+    };
   }
 
   // ── Idempotência (docs/13, decisão 4) ─────────────────────────────
