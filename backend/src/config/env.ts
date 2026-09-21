@@ -115,6 +115,8 @@ export const envSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASSWORD: z.string().optional(),
   MAIL_FROM: z.string().min(1).default('Abertura de Processos <nao-responda@opusce.com.br>'),
+  /** `false` = o worker consome os jobs de e-mail sem enviar (fase de testes, docs/07). */
+  EMAIL_NOTIFICATIONS_ENABLED: booleanFromEnv(true),
 
   // ── Consulta de CNPJ na Receita (docs/05, "Empresas / CNPJs") ─
   // Nomes genéricos (CNPJ_LOOKUP_*, não RECEITAWS_*) porque o provedor é

@@ -140,6 +140,9 @@ SMTP_SECURE=false
 SMTP_USER=
 SMTP_PASSWORD=
 MAIL_FROM="Abertura de Processos <nao-responda@opusce.com.br>"
+# false = o worker consome os jobs de e-mail sem enviar nada (log em info).
+# Chave de segurança da fase de validação da alimentação por IA (docs/13).
+EMAIL_NOTIFICATIONS_ENABLED=true
 
 # ── Armazenamento de anexos ─────────────────────────────────
 # Absoluto. Em produção: D:\AberturaProcessos\uploads

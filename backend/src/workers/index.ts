@@ -20,7 +20,13 @@ const mailer = new NodemailerMailer({
 });
 
 const worker = createEmailWorker(
-  { mailer, prisma, logger, frontendUrl: env.FRONTEND_URL },
+  {
+    mailer,
+    prisma,
+    logger,
+    frontendUrl: env.FRONTEND_URL,
+    notificationsEnabled: env.EMAIL_NOTIFICATIONS_ENABLED,
+  },
   redisConnectionOptions,
 );
 

@@ -18,6 +18,12 @@ export interface EmailWorkerDeps {
   prisma: PrismaClient;
   logger: Logger;
   frontendUrl: string;
+  /**
+   * `false` = consome os jobs sem enviar nada (log em `info`). Chave de
+   * segurança para a fase de testes (docs/07): a operação pediu que
+   * nenhum e-mail saísse enquanto a alimentação por IA é validada.
+   */
+  notificationsEnabled: boolean;
 }
 
 /**
@@ -30,6 +36,14 @@ async function sendToInternalRecipients(
   jobName: string,
   rendered: { subject: string; html: string; text: string },
 ): Promise<void> {
+  if (!deps.notificationsEnabled) {
+    deps.logger.info(
+      { job: jobName, subject: rendered.subject },
+      'E-mail não enviado: EMAIL_NOTIFICATIONS_ENABLED=false',
+    );
+    return;
+  }
+
   const recipients = await resolveEmailRecipients(deps.prisma);
 
   if (recipients.length === 0) {
