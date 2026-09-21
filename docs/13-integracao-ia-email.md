@@ -133,7 +133,8 @@ não pode ganhar ruído nem tarefa nova.
 O desenho final tem três partes, todas do lado da IA e da API:
 
 1. **Remetentes bloqueados no prompt.** O agente vê remetente, assunto e prévia na listagem do
-   conector; e-mails de remetentes da lista (`followupopus`, `multiterminais`, `noreply`...) são
+   conector; e-mails de remetentes da lista (`followupopus`, `multiterminais`, `noreply`... e
+   **todo e-mail interno `@opusce.com.br`** — a IA só abre processo a pedido de cliente) são
    descartados ali mesmo — sem abrir o corpo, sem chamada à API, sem evento. A lista mora no prompt
    da rotina (e na cópia em `docs/prompts/`), editável sem deploy.
 2. **Cursor gravado na API.** `GET /intake/cursor` diz de onde continuar; ao terminar cada página

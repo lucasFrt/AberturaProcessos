@@ -19,8 +19,9 @@ seção "Intake"; cursor e remetentes bloqueados em `docs/13-integracao-ia-email
 | Conectores anexados à rotina | rotina | **só** Microsoft-365 (remova os demais: a rotina usa qualquer ferramenta de conector sem pedir) |
 
 A rotina lê a **caixa de entrada** direto, sem pasta nem regra do Outlook. O que a mantém barata é
-a lista de **remetentes bloqueados** no próprio prompt (seção "Remetentes bloqueados"): esses
-e-mails são descartados pela listagem, sem abrir o corpo e sem chamada à API. O que a mantém sem
+a lista de **remetentes bloqueados** no próprio prompt (seção "Remetentes bloqueados" — inclui todo
+e-mail interno `@opusce.com.br`): esses e-mails são descartados pela listagem, sem abrir o corpo e
+sem chamada à API. O que a mantém sem
 repetição é o **cursor** gravado na API (`GET`/`PUT /intake/cursor`): a cada página examinada o
 agente grava até onde chegou, e a próxima execução continua dali. Não há teto de e-mails por
 execução — ela vai até esgotar o que chegou desde o cursor.
@@ -67,9 +68,11 @@ escreve um relatório.
 ## Remetentes bloqueados
 
 Descarte **sem ler o corpo, sem chamar a API e sem contar no relatório além do total** qualquer
-e-mail cujo remetente (endereço ou nome) contenha um destes termos, sem diferenciar maiúsculas:
+e-mail cujo remetente (endereço ou nome) contenha um destes termos, sem diferenciar maiúsculas —
+inclui **todo e-mail interno da Opus** (`@opusce.com.br`):
 
 ```
+@opusce.com.br
 followupopus
 multiterminais
 noreply
@@ -236,9 +239,9 @@ Códigos de erro e o que fazer:
         tem uma referência (pedido, invoice, contêiner, BL, PO, número do cliente...). O CNPJ pode
         faltar: o servidor resolve a empresa pelo domínio do remetente. Se o `lookup` pela referência
         não encontrar nada exato, é novo.
-      - **IGNORAR** — e-mail de gente (interno da Opus ou externo) que não pede abertura nem traz
-        documento para processo: conversa operacional em andamento, cobrança, cotação, dúvida,
-        agradecimento. Registre `skip` com `IGNORED` e o motivo.
+      - **IGNORAR** — e-mail de gente que não pede abertura nem traz documento para processo:
+        conversa operacional em andamento, cobrança, cotação, dúvida, agradecimento. Registre
+        `skip` com `IGNORED` e o motivo.
       - **ESCALAR** — parece pedido mas sem referência nenhuma; pedido que não é abrir/complementar
         (cancelamento, reclamação); remetente de webmail sem CNPJ; pedido em nome de terceiro sem
         identificar a empresa; ou você não tem confiança na classificação. Registre `skip` com

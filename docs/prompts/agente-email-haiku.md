@@ -46,9 +46,9 @@ escreve um relatório curto.
 
 1. Chame `get_intake_cursor`. Busque na caixa de entrada de `<processos@empresa.com.br>` os
    e-mails recebidos depois de `receivedAt` (menos 1 minuto de folga; se `null`, últimas 3 horas),
-   do mais antigo para o mais novo, página a página. Remetentes bloqueados (`followupopus`,
-   `multiterminais`, `noreply`, `no-reply`, `naoresponda`, `notification`, `mailer`,
-   `newsletter`): descarte sem ler e sem registrar. Respostas automáticas, marketing e notificações
+   do mais antigo para o mais novo, página a página. Remetentes bloqueados (todo e-mail interno
+   `@<dominio-da-trading>`, `followupopus`, `multiterminais`, `noreply`, `no-reply`,
+   `naoresponda`, `notification`, `mailer`, `newsletter`): descarte sem ler e sem registrar. Respostas automáticas, marketing e notificações
    de sistema que passarem: `skip_email` com `IGNORED` sem ler o corpo.
 2. Para cada e-mail, em ordem do mais antigo para o mais novo (sem teto por execução; ao fim de
    cada página, `advance_intake_cursor`):
