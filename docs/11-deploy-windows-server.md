@@ -368,8 +368,19 @@ Pontos de atenção que costumam custar horas:
 - **`maxAllowedContentLength`** default do IIS é 30 MB; sem ajustar, uploads maiores falham no IIS
   antes de chegar ao Node, com erro genérico.
 - **`X-Forwarded-Proto`** precisa de `allowedServerVariables` liberando `HTTP_X_FORWARDED_PROTO`
-  (IIS Manager → URL Rewrite → View Server Variables → Add). Sem isso a regra `serverVariables`
-  causa erro 500 no IIS.
+  (IIS Manager → URL Rewrite → View Server Variables → Add; vale no nó do servidor ou no site).
+  Sem isso a regra `serverVariables` causa erro 500.52 no IIS.
+- **`<webSocket>` é seção bloqueada por padrão** no `applicationHost.config`: com ela no
+  `web.config` do site o IIS responde 500.19 `0x80070021` ("section cannot be used at this path")
+  para **todas** as URLs. Desbloquear uma vez:
+  `%windir%\system32\inetsrv\appcmd.exe unlock config -section:system.webServer/webSocket` + `iisreset`.
+- **Pasta do site dentro de perfil de usuário** (`C:\Users\...`) dá 500.19 `0x80070005`
+  ("Cannot read configuration file due to insufficient permissions"): a identidade do pool não
+  atravessa o perfil. Clonar fora do perfil (`C:\apps\...`) ou conceder `IIS_IUSRS:(RX)` em cada
+  pasta do caminho e `(OI)(CI)RX` em `dist`.
+- **Para ver o erro detalhado** de um 500 do IIS atrás do Cloudflare, faça a requisição do próprio
+  servidor pelo IP do binding: `curl.exe -sk --resolve <host>:443:<ip-do-binding> https://<host>/`
+  — requisição local recebe a página com subcódigo, módulo e linha do `web.config`.
 - **`trust proxy`.** Com `app.set('trust proxy', 1)` no Express, o rate limit conta o IP real; sem
   isso, todas as requisições parecem vir de `127.0.0.1` e um único usuário estoura o limite de todos.
 - **Timeout do proxy do ARR.** O padrão é 30 s. `POST /api/v1/intake/*` com `fetchAttachments`
