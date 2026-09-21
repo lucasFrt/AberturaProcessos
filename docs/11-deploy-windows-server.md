@@ -108,9 +108,8 @@ Na máquina de build (ou no próprio servidor):
 ```powershell
 # Backend
 cd backend
-npm ci
+npm ci                             # postinstall: prisma generate (obrigatório antes do build)
 npm run build                      # gera dist\
-npx prisma generate
 
 # Frontend
 cd ..\frontend
@@ -183,9 +182,8 @@ git checkout master
 
 cd backend
 Copy-Item .env.example .env       # e editar com os valores de produção (seção "Publicação")
-npm ci
+npm ci                            # o postinstall roda `prisma generate` (o build depende dos tipos gerados)
 npm run build                     # backend\dist\
-npx prisma generate
 npx prisma migrate deploy
 npm run seed
 
@@ -204,7 +202,7 @@ Atualização de versão:
 Stop-Service AberturaProcessos-Worker, AberturaProcessos-API
 cd C:\apps\AberturaProcessos
 git pull
-cd backend;  npm ci; npm run build; npx prisma generate; npx prisma migrate deploy
+cd backend;  npm ci; npm run build; npx prisma migrate deploy
 cd ..\frontend; npm ci; npm run build
 Start-Service AberturaProcessos-API, AberturaProcessos-Worker
 Invoke-RestMethod http://127.0.0.1:3000/health/ready

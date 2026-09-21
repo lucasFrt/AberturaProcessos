@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/http/server.ts",
     "dev:worker": "tsx watch src/workers/index.ts",
+    "postinstall": "prisma generate",
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json",
     "start": "node dist/http/server.js",
     "lint": "eslint src tests prisma --ext .ts",
