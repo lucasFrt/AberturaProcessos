@@ -168,6 +168,26 @@ describe('GraphMailAttachmentProvider', () => {
     expect(filterCall).toContain(encodeURIComponent("internetMessageId eq '<a''b@mail.example>'"));
   });
 
+  it('400 (id malformado, ex.: URI em vez do id) também cai no fallback por internetMessageId', async () => {
+    const MESSAGES_URL = 'https://graph.test/v1.0/users/processos%40opusce.com.br/messages';
+    const NEW_ATTACHMENTS_URL = `${MESSAGES_URL}/id-novo/attachments`;
+    const { provider } = buildProvider({
+      [TOKEN_URL]: () => jsonResponse({ access_token: 'tok', expires_in: 3600 }),
+      [`${ATTACHMENTS_URL}?`]: () => new Response('', { status: 400 }),
+      [`${MESSAGES_URL}?$filter=`]: () => jsonResponse({ value: [{ id: 'id-novo' }] }),
+      [`${NEW_ATTACHMENTS_URL}/att-1/$value`]: () => new Response(Buffer.from('x')),
+      [`${NEW_ATTACHMENTS_URL}?`]: () =>
+        jsonResponse({
+          value: [{ '@odata.type': '#microsoft.graph.fileAttachment', id: 'att-1', name: 'a.pdf' }],
+        }),
+    });
+
+    const outcome = await provider.listAttachments('msg-1', { internetMessageId: '<x@mail>' });
+
+    expect(outcome.kind).toBe('OK');
+    expect(await provider.listAttachments('msg-1')).toEqual({ kind: 'MESSAGE_NOT_FOUND' });
+  });
+
   it('404 pelo id sem internetMessageId (ou sem resultado no $filter) continua MESSAGE_NOT_FOUND', async () => {
     const MESSAGES_URL = 'https://graph.test/v1.0/users/processos%40opusce.com.br/messages';
     const { provider } = buildProvider({

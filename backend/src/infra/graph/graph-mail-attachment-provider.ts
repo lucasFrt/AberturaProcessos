@@ -178,7 +178,12 @@ export class GraphMailAttachmentProvider implements MailAttachmentProvider {
       return { kind: 'UNAVAILABLE', reason: 'Falha de rede ao consultar o Microsoft Graph.' };
     }
 
-    if (listResponse.status === 404) {
+    // 404 = id bem formado que não existe mais nesta caixa (mensagem movida
+    // de pasta). 400 = id malformado — verificado contra o Graph real: é o
+    // que volta quando o agente manda a URI (`...%3D`) em vez do campo `id`.
+    // Nos dois casos a mensagem não é alcançável por este id; com
+    // `internetMessageId` ainda dá para reencontrá-la (docs/14).
+    if (listResponse.status === 404 || listResponse.status === 400) {
       return { kind: 'MESSAGE_NOT_FOUND' };
     }
     if (!listResponse.ok) {
