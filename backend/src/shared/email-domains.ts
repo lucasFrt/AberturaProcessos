@@ -25,6 +25,12 @@ export const PUBLIC_WEBMAIL_DOMAINS: ReadonlySet<string> = new Set([
   'globo.com',
   'proton.me',
   'protonmail.com',
+  // webmail chinês, comum em fornecedores/agentes de origem
+  '126.com',
+  '163.com',
+  'qq.com',
+  'vip.qq.com',
+  'foxmail.com',
 ]);
 
 /** `domain` já em minúsculas, sem "@". */

@@ -475,6 +475,47 @@ describe('IlogSyncService.runOnce — backfill e incremental (docs/15, seção 5
     expect(ctx2.emailDomainRepository.items).toHaveLength(1);
   });
 
+  it('empresas que compartilham um domínio de contato (grupo/filiais) entram na mesma organização', async () => {
+    const ctx = await buildContext();
+    const domains = ['carstation.com.br', 'phtransportes.com'];
+    ctx.source.sharedDomains.push('phtransportes.com'); // transportadora: 4+ empresas sem relação
+    ctx.source.processes.set(
+      1,
+      makeIlogProcess({
+        ilogProcessId: 1,
+        importer: {
+          ilogCompanyId: 235,
+          legalName: 'MV5 COMERCIO LTDA',
+          tradeName: null,
+          cnpj: '05295679000100',
+          contactDomains: domains,
+        },
+      }),
+    );
+    ctx.source.processes.set(
+      2,
+      makeIlogProcess({
+        ilogProcessId: 2,
+        importer: {
+          ilogCompanyId: 301,
+          legalName: 'V. TECH COMERCIO E LOCACAO',
+          tradeName: null,
+          cnpj: '13478900000100',
+          contactDomains: domains,
+        },
+      }),
+    );
+
+    const result = await ctx.service.runOnce();
+    expect(result).toMatchObject({ created: 2, companiesCreated: 2, domainsRegistered: 1 });
+    expect(ctx.organizationRepository.items).toHaveLength(1);
+    expect(ctx.companyRepository.items.map((c) => c.organizationId)).toEqual([
+      ctx.organizationRepository.items[0]?.id,
+      ctx.organizationRepository.items[0]?.id,
+    ]);
+    expect(ctx.emailDomainRepository.items.map((d) => d.domain)).toEqual(['carstation.com.br']);
+  });
+
   it('processo sem importador é ignorado com aviso', async () => {
     const ctx = await buildContext();
     ctx.source.processes.set(1, makeIlogProcess({ ilogProcessId: 1, importer: null }));

@@ -277,9 +277,15 @@ Desvios (todos deliberados):
   parte (aviso no log). Ao vincular com empresa pendente, o cadastro é concluído com razão social,
   nome fantasia, CNPJ e `ilogCompanyId` do iLog. Um cadastro pendente também é concluído por nome
   (normalizado, sem sufixos societários) ou por domínio de contato já registrado na organização.
-- **Domínios de contato** viram `EmailDomain` só quando exclusivos de uma empresa no iLog
-  (`listSharedContactDomains` lê `empcontato` inteira — 527 linhas — uma vez por execução),
-  corporativos e ainda desconhecidos aqui; `autoApprove = false`.
+- **Domínios de contato** viram `EmailDomain` quando corporativos, ainda desconhecidos aqui e
+  **não** usados por 4+ raízes de CNPJ sem relação entre si no iLog (`listSharedContactDomains`
+  lê `empcontato` inteira — 527 linhas — uma vez por execução); `autoApprove = false`. O limiar
+  veio do dado: em 21/09, os domínios com 2–3 raízes eram grupos/filiais (`carstation.com.br` =
+  MV5 + V. TECH + MOBI RIO, `globoimport.com.br`, `riomaster.com.br`); os com 4+ eram webmail,
+  `opusce.com.br` (60 raízes) e uma transportadora. Um domínio já registrado por outra empresa
+  do grupo faz a empresa nova entrar na **mesma organização** — é o que "organização" significa
+  (docs/01): o domínio agrupa os CNPJs. A regra antiga ("só domínio exclusivo de uma empresa")
+  teria deixado de fora quase todos os clientes recorrentes.
 - **Índice também para WEB/API**: toda criação/edição de `reference` (formulário, chave de API)
   alimenta o índice com `source = MANUAL`; `identifiers`/`addReferences` do intake, com `EMAIL`; o
   espelho regrava os `ILOG` a cada leitura (e "promove" para `ILOG` o que o e-mail já tinha e o

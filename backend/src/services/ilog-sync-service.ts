@@ -379,8 +379,10 @@ export class IlogSyncService {
   /**
    * Empresa local para o importador do iLog: por `ilogCompanyId`, depois por
    * CNPJ; senão conclui um cadastro pendente que combine (o do processo em
-   * mãos, mesmo nome ou domínio de contato); senão cria organização + empresa
-   * com os dados reais do iLog e os domínios de contato exclusivos.
+   * mãos, mesmo nome ou domínio de contato); senão cria a empresa com os
+   * dados reais do iLog — na organização que já tem um dos seus domínios de
+   * contato (grupo/filiais), ou numa organização nova — e registra os
+   * domínios de contato que identificam o cliente.
    */
   private async resolveCompany(
     importer: IlogCompany,
@@ -414,7 +416,7 @@ export class IlogSyncService {
       }
     }
 
-    const pending = await this.findPendingCompany(importer, preferredCompanyId);
+    const pending = await this.findPendingCompany(importer, preferredCompanyId, ctx);
     if (pending) {
       const completed = await this.deps.companyRepository.update(pending.id, {
         ...(importer.cnpj ? { cnpj: importer.cnpj, documentType: 'CNPJ' } : {}),
@@ -431,16 +433,23 @@ export class IlogSyncService {
       return completed;
     }
 
-    const organization = await this.deps.organizationRepository.create({
-      name: importer.tradeName ?? importer.legalName,
-      isInternal: false,
-    });
+    // Domínio de contato já registrado (por outra empresa do grupo, pelo
+    // intake ou à mão) → a organização é a mesma: é o que "organização"
+    // significa aqui — o domínio agrupa os CNPJs (docs/01).
+    const organizationId =
+      (await this.findOrganizationByContactDomain(importer, ctx)) ??
+      (
+        await this.deps.organizationRepository.create({
+          name: importer.tradeName ?? importer.legalName,
+          isInternal: false,
+        })
+      ).id;
     const company = await this.deps.companyRepository.create({
       cnpj: importer.cnpj,
       documentType: importer.cnpj ? 'CNPJ' : null,
       legalName: importer.legalName,
       tradeName: importer.tradeName,
-      organizationId: organization.id,
+      organizationId,
       ilogCompanyId: importer.ilogCompanyId,
     });
     ctx.result.companiesCreated += 1;
@@ -448,8 +457,38 @@ export class IlogSyncService {
       { companyId: company.id, legalName: company.legalName, cnpj: company.cnpj },
       'iLog: empresa cadastrada',
     );
-    await this.registerContactDomains(importer, organization.id, ctx);
+    await this.registerContactDomains(importer, organizationId, ctx);
     return company;
+  }
+
+  /** Organização (não interna) que já tem um dos domínios de contato identificadores do importador. */
+  private async findOrganizationByContactDomain(
+    importer: IlogCompany,
+    ctx: RunContext,
+  ): Promise<string | null> {
+    for (const domain of await this.identifyingDomains(importer, ctx)) {
+      const known = await this.deps.emailDomainRepository.findByDomain(domain);
+      if (!known) continue;
+      const organization = await this.deps.organizationRepository.findById(known.organizationId);
+      if (organization && !organization.isInternal) return organization.id;
+    }
+    return null;
+  }
+
+  /**
+   * Domínios de contato que identificam o cliente: corporativos (não webmail)
+   * e não usados por empresas sem relação entre si no iLog (transportadoras,
+   * despachantes — `listSharedContactDomains`, lido uma vez por execução).
+   */
+  private async identifyingDomains(importer: IlogCompany, ctx: RunContext): Promise<string[]> {
+    if (importer.contactDomains.length === 0) return [];
+    if (ctx.sharedDomains === null) {
+      ctx.sharedDomains = new Set(await this.deps.source.listSharedContactDomains());
+    }
+    const shared = ctx.sharedDomains;
+    return importer.contactDomains.filter(
+      (domain) => !isPublicWebmailDomain(domain) && !shared.has(domain),
+    );
   }
 
   /**
@@ -460,6 +499,7 @@ export class IlogSyncService {
   private async findPendingCompany(
     importer: IlogCompany,
     preferredCompanyId: string | null,
+    ctx: RunContext,
   ): Promise<Company | null> {
     if (preferredCompanyId) {
       const preferred = await this.deps.companyRepository.findById(preferredCompanyId);
@@ -485,8 +525,7 @@ export class IlogSyncService {
       if (candidateNames.some((name) => name.length > 0 && names.has(name))) return candidate;
     }
 
-    for (const domain of importer.contactDomains) {
-      if (isPublicWebmailDomain(domain)) continue;
+    for (const domain of await this.identifyingDomains(importer, ctx)) {
       const known = await this.deps.emailDomainRepository.findByDomain(domain);
       if (!known) continue;
       const pendingOfOrg = page.items.find(
@@ -500,22 +539,17 @@ export class IlogSyncService {
   }
 
   /**
-   * Domínios de contato do importador viram `EmailDomain` da organização
-   * (docs/15, seção 5.1) — só os exclusivos (não aparecem em outra empresa
-   * do iLog), corporativos, e ainda desconhecidos aqui. `autoApprove = false`:
-   * agrupa sem conceder acesso a ninguém (mesma regra do intake, docs/13).
+   * Domínios de contato identificadores do importador viram `EmailDomain` da
+   * organização (docs/15, seção 5.1), quando ainda desconhecidos aqui.
+   * `autoApprove = false`: agrupa sem conceder acesso a ninguém (mesma regra
+   * do intake, docs/13).
    */
   private async registerContactDomains(
     importer: IlogCompany,
     organizationId: string,
     ctx: RunContext,
   ): Promise<void> {
-    if (importer.contactDomains.length === 0) return;
-    if (ctx.sharedDomains === null) {
-      ctx.sharedDomains = new Set(await this.deps.source.listSharedContactDomains());
-    }
-    for (const domain of importer.contactDomains) {
-      if (isPublicWebmailDomain(domain) || ctx.sharedDomains.has(domain)) continue;
+    for (const domain of await this.identifyingDomains(importer, ctx)) {
       const known = await this.deps.emailDomainRepository.findByDomain(domain);
       if (known) continue;
       await this.deps.emailDomainRepository.create({

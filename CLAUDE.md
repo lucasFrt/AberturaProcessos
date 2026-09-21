@@ -147,7 +147,9 @@ container.ts  composição manual de dependências (ver acima)
 - **O iLog (sistema de comex, MySQL) é a fonte da verdade dos processos** (docs/15; docs/13,
   decisão 13). `IlogSyncService` (`services/ilog-sync-service.ts`) espelha processos abertos/
   alterados a cada `ILOG_SYNC_INTERVAL_MINUTES` — `Process.source = ILOG`, `ilogProcessId`/
-  `ilogNumber`, importador com CNPJ real, `EmailDomain` dos domínios de contato exclusivos — e
+  `ilogNumber`, importador com CNPJ real, `EmailDomain` dos domínios de contato (domínio já
+  registrado agrupa a empresa na mesma organização; só webmail e domínios de 4+ empresas sem
+  relação ficam de fora) — e
   **vincula** (nunca duplica) o processo que o e-mail já abriu. O job (`jobs/ilog-sync-job.ts`)
   roda no **processo da API**, não no worker, porque precisa do Socket.IO; um único processo da
   API existe em produção. Nada escreve no iLog: usuário do banco somente leitura + `SET SESSION

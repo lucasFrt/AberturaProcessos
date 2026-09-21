@@ -521,7 +521,8 @@ incremental pelo `changelog` (processo + faturas + contêineres, sobreposição 
 avança até onde tudo foi lido); `Process.ilog*`, `Company.ilogCompanyId`, `IlogSyncState`;
 `RECORD_SOURCES` += `ILOG`. (c) Empresas: importador por `ilogCompanyId` → CNPJ → cadastro pendente
 (da empresa do processo, mesmo nome ou domínio de contato conhecido) → criar organização + empresa
-+ `EmailDomain` dos domínios de contato exclusivos (`autoApprove=false`); vínculo do processo aberto
++ `EmailDomain` dos domínios de contato (exceto webmail e os usados por 4+ empresas sem relação;
+domínio já registrado agrupa a empresa na mesma organização; `autoApprove=false`); vínculo do processo aberto
 por e-mail (mesmo identificador e mesma empresa ou empresa pendente) em vez de duplicar.
 (d) Retaguarda B implícita: `lookup`/`attach` sem resultado no índice consultam o iLog uma vez
 (`importByIdentifier`) e espelham na hora. (e) `IlogSyncJob` (`setInterval`, processo da API, para
@@ -533,7 +534,8 @@ descrições de `lookup_process`/`attach_to_process`; prompt v9.
 doc 05 (`GET /processes`, `GET /processes/:id`, `/intake/*`), doc 10 (`ILOG_*`).
 
 **Aceite:** unit (fakes): normalização/classificação/extração de identificadores; backfill cria
-processos `ILOG` com empresa/organização/domínios e índice; incremental relê só o alterado, sem
+processos `ILOG` com empresa/organização/domínios e índice; empresas com o mesmo domínio de
+contato entram na mesma organização; incremental relê só o alterado, sem
 duplicar, avançando o cursor; vincula processo criado por e-mail com empresa pendente e conclui o
 cadastro; não vincula em empresa diferente; conclui pendente por nome/domínio; ignora sem
 importador; erro → `lastError`; sem ciclos sobrepostos; ator por e-mail ou primeiro ADMIN;

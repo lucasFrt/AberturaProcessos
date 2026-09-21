@@ -34,6 +34,14 @@ const CHANGELOG_OVERLAP_MINUTES = 2;
 /** Lotes de `IN (...)`: o suficiente para o backfill em poucas idas sem estourar o pacote. */
 const FETCH_BATCH_SIZE = 200;
 
+/**
+ * A partir de quantas raízes de CNPJ distintas um domínio de contato deixa de
+ * identificar um cliente. Medido em 21/09/2026 (docs/15, seção 7): grupos e
+ * filiais têm 2–3 raízes (`carstation.com.br`, `globoimport.com.br`);
+ * transportadoras, webmail e o domínio da própria Opus têm 4 ou mais.
+ */
+const SHARED_DOMAIN_MIN_ROOTS = 4;
+
 type Row = Record<string, unknown>;
 
 function isRowArray(value: unknown): value is Row[] {
@@ -360,22 +368,28 @@ export class MysqlIlogProcessSource implements IlogProcessSource {
   async listSharedContactDomains(): Promise<string[]> {
     // `empcontato` tem centenas de linhas: uma leitura inteira por execução é
     // mais barata (e mais correta, por causa de células com vários e-mails)
-    // do que um GROUP BY por domínio no MySQL.
+    // do que um GROUP BY por domínio no MySQL. Conta raízes de CNPJ (8
+    // primeiros dígitos), não `cod_emp`: filiais da mesma empresa são uma.
     const rows = await this.query(
-      `SELECT cod_emp, email_empcontato FROM empcontato WHERE email_empcontato LIKE '%@%' LIMIT 20000`,
+      `SELECT c.cod_emp, c.email_empcontato, e.cgc_emp
+         FROM empcontato c
+         LEFT JOIN empresa e ON e.cod_emp = c.cod_emp
+        WHERE c.email_empcontato LIKE '%@%'
+        LIMIT 20000`,
     );
-    const companiesByDomain = new Map<string, Set<number>>();
+    const rootsByDomain = new Map<string, Set<string>>();
     for (const row of rows) {
       const companyId = integer(row, 'cod_emp');
       if (companyId === null) continue;
+      const root = cnpjDigits(text(row, 'cgc_emp'))?.slice(0, 8) ?? `cod_emp:${companyId}`;
       for (const domain of domainsOf(text(row, 'email_empcontato'))) {
-        const set = companiesByDomain.get(domain) ?? new Set<number>();
-        set.add(companyId);
-        companiesByDomain.set(domain, set);
+        const set = rootsByDomain.get(domain) ?? new Set<string>();
+        set.add(root);
+        rootsByDomain.set(domain, set);
       }
     }
-    return [...companiesByDomain.entries()]
-      .filter(([, companies]) => companies.size > 1)
+    return [...rootsByDomain.entries()]
+      .filter(([, roots]) => roots.size >= SHARED_DOMAIN_MIN_ROOTS)
       .map(([domain]) => domain)
       .sort();
   }

@@ -239,16 +239,28 @@ describe('MysqlIlogProcessSource (docs/15, seção 5.3)', () => {
     expect(fakePool.queries.filter((q) => /WHERE nro_pro = \?/.test(q.sql))).toHaveLength(1);
   });
 
-  it('listSharedContactDomains devolve só domínios usados por mais de uma empresa', async () => {
+  it('listSharedContactDomains devolve só domínios usados por 4+ raízes de CNPJ distintas', async () => {
     routes([
-      /FROM empcontato WHERE email_empcontato LIKE/,
+      /FROM empcontato c/,
       () => [
-        { cod_emp: 1, email_empcontato: 'a@despachante.com.br' },
-        { cod_emp: 2, email_empcontato: 'b@despachante.com.br, c@unica.com.br' },
-        { cod_emp: 2, email_empcontato: 'd@unica.com.br' },
+        // transportadora: 4 empresas sem relação
+        { cod_emp: 1, email_empcontato: 'a@transportadora.com', cgc_emp: '11.111.111/0001-11' },
+        { cod_emp: 2, email_empcontato: 'b@transportadora.com', cgc_emp: '22.222.222/0001-22' },
+        { cod_emp: 3, email_empcontato: 'c@transportadora.com', cgc_emp: '33.333.333/0001-33' },
+        { cod_emp: 4, email_empcontato: 'd@transportadora.com', cgc_emp: '44.444.444/0001-44' },
+        // filiais (mesma raiz) + um grupo de 2 raízes: continuam identificando o cliente
+        { cod_emp: 5, email_empcontato: 'x@filiais.com.br', cgc_emp: '55.555.555/0001-55' },
+        {
+          cod_emp: 6,
+          email_empcontato: 'y@filiais.com.br; z@grupo.com.br',
+          cgc_emp: '55.555.555/0002-36',
+        },
+        { cod_emp: 7, email_empcontato: 'w@grupo.com.br', cgc_emp: '77.777.777/0001-77' },
+        // sem CNPJ no iLog: conta pelo cod_emp
+        { cod_emp: 8, email_empcontato: 'q@semcnpj.com', cgc_emp: null },
       ],
     ]);
-    expect(await build().listSharedContactDomains()).toEqual(['despachante.com.br']);
+    expect(await build().listSharedContactDomains()).toEqual(['transportadora.com']);
   });
 
   it('close() encerra o pool', async () => {

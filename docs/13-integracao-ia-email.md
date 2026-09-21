@@ -291,9 +291,11 @@ Estudo completo e desenho no **docs/15**. O resumo do que muda para o intake:
    vale como antes.
 4. **Empresas e domínios vêm do iLog**: importador por `ilogCompanyId` → CNPJ → cadastro pendente
    compatível (empresa do processo, mesmo nome ou domínio de contato já conhecido) → criação com
-   razão social e CNPJ reais. Os domínios de contato **exclusivos** de uma empresa no iLog viram
-   `EmailDomain` (`autoApprove = false`, como no intake); domínios compartilhados (webmail,
-   despachantes, agentes) não. Isso elimina o "cadastro pendente" para clientes recorrentes.
+   razão social e CNPJ reais. Os domínios de contato corporativos viram `EmailDomain`
+   (`autoApprove = false`, como no intake), e um domínio já registrado agrupa a empresa nova na
+   mesma organização (filiais e grupos); só domínios usados por 4+ empresas sem relação (webmail,
+   transportadoras, despachantes) ficam de fora. Isso elimina o "cadastro pendente" para clientes
+   recorrentes.
 5. **O agente informa `identifiers`** na criação (HBL, contêineres, número do agente, fatura),
    além da `reference`, para o índice já nascer completo; e um "novo processo" cujo identificador
    já existe na mesma empresa é tratado pelo servidor como complemento (`event.kind =

@@ -68,9 +68,10 @@ export interface IlogProcessSource {
    */
   findProcessIdsByIdentifier(value: string, limit: number): Promise<number[]>;
   /**
-   * Domínios de contato que aparecem em mais de uma empresa do iLog
-   * (webmail, despachantes, agentes) — não servem para ligar domínio →
-   * cliente (docs/15, seção 2).
+   * Domínios de contato usados por empresas **sem relação** entre si no iLog
+   * (4+ raízes de CNPJ distintas: webmail, despachantes, transportadoras) —
+   * não servem para ligar domínio → cliente (docs/15, seções 2 e 7). Um
+   * domínio com 2–3 raízes é grupo/filiais: vira uma organização só.
    */
   listSharedContactDomains(): Promise<string[]>;
 }
