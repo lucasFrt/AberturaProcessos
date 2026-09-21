@@ -213,11 +213,29 @@ npm ci
 npm run build                     # frontend\dist\ (inclui public\web.config)
 ```
 
-Serviços NSSM: mesmos comandos da seção seguinte, com `AppDirectory` em
-`C:\apps\AberturaProcessos\backend` (o programa continua `dist\http\server.js` e
-`dist\workers\index.js`). Site do IIS: physical path `C:\apps\AberturaProcessos\frontend\dist`.
+Serviços NSSM: **`deploy\install-services.ps1`** faz tudo (baixa o NSSM se faltar, detecta node e
+o serviço do SQL Server, cria `uploads\`/`logs\` fora do clone com permissão para SYSTEM, instala
+os dois serviços apontando para o clone e valida `/health/ready`). Idempotente — rodar de novo
+recria com a configuração atual:
 
-Atualização de versão:
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\install-services.ps1            # dados em D:\AberturaProcessos (ou C:\ sem unidade D:)
+powershell -ExecutionPolicy Bypass -File deploy\install-services.ps1 -DataRoot C:\AberturaProcessos
+```
+
+Os comandos NSSM equivalentes, para fazer à mão, estão na seção seguinte. Site do IIS: physical
+path `<clone>\frontend\dist`.
+
+Atualização de versão: **`deploy\update.ps1`** (git pull → backup do banco via `sqlcmd` → `npm ci` +
+build do backend → `migrate deploy` → build do front → reinício dos serviços na ordem certa →
+`/health/ready`):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\update.ps1
+powershell -ExecutionPolicy Bypass -File deploy\update.ps1 -SkipPull    # só rebuild/restart
+```
+
+Equivalente manual:
 
 ```powershell
 Stop-Service AberturaProcessos-Worker, AberturaProcessos-API
@@ -230,6 +248,8 @@ Invoke-RestMethod http://127.0.0.1:3008/health/ready
 ```
 
 Backup do banco antes do `migrate deploy` continua obrigatório (seção "Atualização de versão").
+Os scripts em `deploy\` são salvos em **UTF-8 com BOM** de propósito: o PowerShell 5.1 lê `.ps1`
+sem BOM como ANSI e os acentos quebram o parser.
 
 ## Serviços com NSSM
 
