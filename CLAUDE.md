@@ -48,6 +48,7 @@ O operacional continua consultando e movimentando o funil pelo front.
 | `11-deploy-windows-server.md` | IIS, NSSM, produção |
 | `12-plano-de-tarefas.md` | **Comece aqui.** As 22 tarefas do núcleo + Fase 7 (alimentação por IA). |
 | `13-integracao-ia-email.md` | Alimentação por IA: chaves de API, intake idempotente, anexos via Graph, cadastro automático, MCP |
+| `15-ilog-fonte-da-verdade.md` | Estudo do banco do iLog (sistema de comex legado) e desenho do espelho de processos (Tarefa 30) |
 
 Ao mudar comportamento de contrato (rota, payload, schema), atualize o documento correspondente
 **antes** ou **junto** da implementação — os docs são a fonte da verdade, não um artefato descartável.
