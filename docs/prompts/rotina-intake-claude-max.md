@@ -243,6 +243,8 @@ Problemas de configuração: <lista ou "nenhum">
 ```
 
 Envie esse relatório por e-mail para `<OPERACIONAL_EMAIL>` (assunto `Intake IA — <data>`) **somente**
-se houver ao menos um item criado, complementado, escalado ou problema de configuração. Nunca envie
-e-mail para o cliente nem para qualquer outro endereço. Termine a execução com o mesmo relatório como
-resposta final.
+se houver ao menos um item criado, complementado, escalado ou problema de configuração. Envie o
+corpo como **texto simples**, exatamente como está acima — sem HTML, sem Markdown, sem tags — e
+envie **uma única vez**: se a ferramenta confirmar o envio, não reenvie mesmo que a formatação não
+tenha ficado como você queria. Nunca envie e-mail para o cliente nem para qualquer outro endereço.
+Termine a execução com o mesmo relatório como resposta final.
