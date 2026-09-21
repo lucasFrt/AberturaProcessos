@@ -234,6 +234,30 @@ Um "guarda-volumes" de documentos sem processo (anexar automaticamente quando o 
 aquele identificador for criado) é a evolução natural; hoje o rastro é o `IntakeEvent` `IGNORED` com
 o motivo, e o e-mail original continua na caixa.
 
+### 12. Sem relatório por e-mail: pasta por organização na caixa e tela "Intake IA"
+
+O relatório da rotina por e-mail para a própria caixa operacional não fazia sentido para quem
+recebe ("eles já receberam o e-mail; para que um resumo?") e virou ruído. Substituído por duas
+coisas:
+
+1. **Cópia do e-mail processado para `Processos IA/<Organização>/`** na mesma caixa, feita pelo
+   **backend** logo depois de criar ou complementar o processo (`MailboxOrganizer`, implementado
+   no mesmo provider Graph). Cópia, nunca movimentação: a caixa de entrada que o operacional usa
+   não muda. O nome da pasta é o da organização do cliente (sanitizado para o Exchange); as pastas
+   são criadas sob demanda e os ids ficam em cache no processo da API. Exige o papel Exchange
+   **`Application Mail.ReadWrite`** no lugar de `Mail.Read` (mesmo escopo `IntakeProcessos`) e
+   `GRAPH_ORGANIZE_ENABLED=true` (`GRAPH_ORGANIZE_FOLDER` muda o nome da pasta raiz). É
+   best-effort: sem permissão (403) ou com o Graph fora, o intake conclui normalmente e o aviso
+   ("E-mail não copiado para a pasta…") fica no resultado e no evento.
+2. **Tela "Intake IA"** no front (`/intake`, OPERATIONAL e ADMIN): lista os `IntakeEvent` com
+   resultado (processo criado, documento anexado, sem ação, precisa de uma pessoa), motivo,
+   avisos, remetente e link para o processo, com filtros por resultado e situação, e a posição do
+   cursor. É onde o operacional vê os "documentos sem processo" e os escalados — o que antes ia no
+   e-mail.
+
+A rotina, com isso, **não usa conector nenhum**: só a API. O relatório continua existindo como
+resposta final da execução (visível em claude.ai/code/routines), para auditoria da própria rotina.
+
 ## Fluxo de uma execução do agente
 
 ```mermaid
@@ -317,10 +341,21 @@ Connect-ExchangeOnline
 # ObjectId = "Object ID" do app em Enterprise Applications (não o do App Registration)
 New-ServicePrincipal -AppId <GRAPH_CLIENT_ID> -ObjectId <ObjectId-do-Enterprise-App> -DisplayName "Intake de processos"
 New-ManagementScope -Name "IntakeProcessos" -RecipientRestrictionFilter "PrimarySmtpAddress -eq 'opusoperacional@opusce.com.br'"
-New-ManagementRoleAssignment -App <ObjectId-do-Enterprise-App> -Role "Application Mail.Read" -CustomResourceScope "IntakeProcessos"
+New-ManagementRoleAssignment -App <ObjectId-do-Enterprise-App> -Role "Application Mail.ReadWrite" -CustomResourceScope "IntakeProcessos"
 # Valida na hora (ignora o cache de 30 min a 2 h da propagação real):
 Test-ServicePrincipalAuthorization -Identity <ObjectId-do-Enterprise-App> -Resource opusoperacional@opusce.com.br
 ```
+
+`Application Mail.ReadWrite` (não `Mail.Read`) porque a decisão 12 copia o e-mail processado para
+a pasta da organização. Se o papel já tinha sido concedido como `Mail.Read`, troque:
+
+```powershell
+Get-ManagementRoleAssignment -App <ObjectId-do-Enterprise-App> | Remove-ManagementRoleAssignment -Confirm:$false
+New-ManagementRoleAssignment -App <ObjectId-do-Enterprise-App> -Role "Application Mail.ReadWrite" -CustomResourceScope "IntakeProcessos"
+```
+
+O escopo continua restrito à caixa `opusoperacional@`: a escrita vale só ali, e o backend só usa
+para criar pastas e copiar mensagens (nunca move, apaga ou envia).
 
 3. `GRAPH_MAILBOX` **tem de ser a mesma caixa que o agente lê pelo conector**: o id de mensagem do
    Graph é específico da caixa, e o backend busca `/users/{GRAPH_MAILBOX}/messages/{id}`. A caixa

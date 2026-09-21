@@ -4,6 +4,7 @@ import type {
   MailAttachmentProvider,
   MailAttachmentsOutcome,
 } from '@/domain/mail/mail-attachment-provider';
+import type { CopyToFolderOutcome, MailboxOrganizer } from '@/domain/mail/mailbox-organizer';
 import type {
   GetMailboxMessageOutcome,
   ListMailboxOptions,
@@ -153,8 +154,12 @@ const TOKEN_EXPIRY_SKEW_MS = 60_000;
  * backend não tem cliente HTTP nas dependências e adicionar um SDK inteiro
  * do Graph para duas chamadas GET não se paga.
  */
-export class GraphMailAttachmentProvider implements MailAttachmentProvider, MailboxReader {
+export class GraphMailAttachmentProvider
+  implements MailAttachmentProvider, MailboxReader, MailboxOrganizer
+{
   private cachedToken: { value: string; expiresAt: number } | null = null;
+  /** Caminho de pasta (`a/b`) → id no Graph. As pastas não mudam de id; poupa duas chamadas por cópia. */
+  private readonly folderIds = new Map<string, string>();
 
   constructor(
     private readonly config: GraphMailAttachmentProviderConfig,
@@ -216,9 +221,19 @@ export class GraphMailAttachmentProvider implements MailAttachmentProvider, Mail
 
     const outcome = await this.getJson(url, token, 'listar a caixa de entrada');
     if (outcome.kind !== 'OK') {
-      return outcome.kind === 'NOT_FOUND'
-        ? { kind: 'UNAVAILABLE', reason: 'Caixa de entrada não encontrada no Microsoft Graph.' }
-        : outcome;
+      if (outcome.kind === 'NOT_FOUND') {
+        return {
+          kind: 'UNAVAILABLE',
+          reason: 'Caixa de entrada não encontrada no Microsoft Graph.',
+        };
+      }
+      if (outcome.kind === 'FORBIDDEN') {
+        return {
+          kind: 'UNAVAILABLE',
+          reason: 'Sem permissão para ler a caixa no Microsoft Graph.',
+        };
+      }
+      return outcome;
     }
     const payload = outcome.payload as GraphMessageListResponse;
     const list = Array.isArray(payload.value) ? payload.value : [];
@@ -248,7 +263,14 @@ export class GraphMailAttachmentProvider implements MailAttachmentProvider, Mail
       { Prefer: 'outlook.body-content-type="text"' },
     );
     if (messageOutcome.kind !== 'OK') {
-      return messageOutcome.kind === 'NOT_FOUND' ? { kind: 'MESSAGE_NOT_FOUND' } : messageOutcome;
+      if (messageOutcome.kind === 'NOT_FOUND') return { kind: 'MESSAGE_NOT_FOUND' };
+      if (messageOutcome.kind === 'FORBIDDEN') {
+        return {
+          kind: 'UNAVAILABLE',
+          reason: 'Sem permissão para ler a caixa no Microsoft Graph.',
+        };
+      }
+      return messageOutcome;
     }
     const summary = summaryOf(messageOutcome.payload);
     if (!summary) {
@@ -264,7 +286,14 @@ export class GraphMailAttachmentProvider implements MailAttachmentProvider, Mail
         'listar anexos',
       );
       if (listOutcome.kind !== 'OK') {
-        return listOutcome.kind === 'NOT_FOUND' ? { kind: 'MESSAGE_NOT_FOUND' } : listOutcome;
+        if (listOutcome.kind === 'NOT_FOUND') return { kind: 'MESSAGE_NOT_FOUND' };
+        if (listOutcome.kind === 'FORBIDDEN') {
+          return {
+            kind: 'UNAVAILABLE',
+            reason: 'Sem permissão para ler a caixa no Microsoft Graph.',
+          };
+        }
+        return listOutcome;
       }
       attachments = this.parseList(listOutcome.payload).map((item) => ({
         name: item.name,
@@ -284,6 +313,141 @@ export class GraphMailAttachmentProvider implements MailAttachmentProvider, Mail
     return { kind: 'OK', message: detail };
   }
 
+  /**
+   * Copia a mensagem para `folderPath` (docs/13, decisão 12), criando as
+   * pastas que faltarem. Exige `Application Mail.ReadWrite`: com `Mail.Read`
+   * o Graph responde 403 → `FORBIDDEN`, e quem chamou decide (o intake só
+   * avisa).
+   */
+  async copyMessageToFolder(messageId: string, folderPath: string[]): Promise<CopyToFolderOutcome> {
+    let token: string;
+    try {
+      token = await this.getAccessToken();
+    } catch (error) {
+      this.logger.warn({ err: error }, 'Falha ao obter token do Microsoft Graph');
+      return { kind: 'UNAVAILABLE', reason: 'Falha de autenticação no Microsoft Graph.' };
+    }
+
+    const folder = await this.ensureFolder(folderPath, token);
+    if (folder.kind !== 'OK') return folder;
+
+    const copy = await this.postJson(
+      `${this.mailboxUrl()}/messages/${encodeURIComponent(messageId)}/copy`,
+      { destinationId: folder.id },
+      token,
+      'copiar a mensagem',
+    );
+    if (copy.kind !== 'OK') {
+      return copy.kind === 'NOT_FOUND' ? { kind: 'MESSAGE_NOT_FOUND' } : copy;
+    }
+    const copied =
+      isRecord(copy.payload) && typeof copy.payload.id === 'string' ? copy.payload.id : null;
+    return { kind: 'OK', copiedMessageId: copied };
+  }
+
+  private async ensureFolder(
+    folderPath: string[],
+    token: string,
+  ): Promise<
+    { kind: 'OK'; id: string } | { kind: 'FORBIDDEN' } | { kind: 'UNAVAILABLE'; reason: string }
+  > {
+    let parentId: string | null = null;
+    let key = '';
+    for (const rawName of folderPath) {
+      const name = rawName.trim();
+      key = key ? `${key}/${name}` : name;
+      const cached = this.folderIds.get(key);
+      if (cached) {
+        parentId = cached;
+        continue;
+      }
+      const base = parentId
+        ? `${this.mailboxUrl()}/mailFolders/${encodeURIComponent(parentId)}/childFolders`
+        : `${this.mailboxUrl()}/mailFolders`;
+      // OData: aspas simples no literal são escapadas duplicando-as.
+      const literal = name.replace(/'/g, "''");
+      const found = await this.getJson(
+        `${base}?$filter=${encodeURIComponent(`displayName eq '${literal}'`)}&$select=id&$top=1`,
+        token,
+        'procurar a pasta',
+      );
+      if (found.kind === 'FORBIDDEN') return found;
+      if (found.kind === 'UNAVAILABLE') return found;
+      let id: string | null = null;
+      if (found.kind === 'OK') {
+        const list = isRecord(found.payload)
+          ? (found.payload as { value?: unknown }).value
+          : undefined;
+        const first: unknown = Array.isArray(list) ? list[0] : undefined;
+        if (isRecord(first) && typeof first.id === 'string') id = first.id;
+      }
+      if (!id) {
+        const created = await this.postJson(base, { displayName: name }, token, 'criar a pasta');
+        if (created.kind !== 'OK') {
+          return created.kind === 'NOT_FOUND'
+            ? { kind: 'UNAVAILABLE', reason: 'Pasta pai não encontrada no Microsoft Graph.' }
+            : created;
+        }
+        if (!isRecord(created.payload) || typeof created.payload.id !== 'string') {
+          return { kind: 'UNAVAILABLE', reason: 'Resposta do Microsoft Graph é inválida.' };
+        }
+        id = created.payload.id;
+      }
+      this.folderIds.set(key, id);
+      parentId = id;
+    }
+    if (!parentId) return { kind: 'UNAVAILABLE', reason: 'Caminho de pasta vazio.' };
+    return { kind: 'OK', id: parentId };
+  }
+
+  private async postJson(
+    url: string,
+    body: unknown,
+    token: string,
+    action: string,
+  ): Promise<
+    | { kind: 'OK'; payload: unknown }
+    | { kind: 'NOT_FOUND' }
+    | { kind: 'FORBIDDEN' }
+    | { kind: 'UNAVAILABLE'; reason: string }
+  > {
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.config.timeoutMs),
+      });
+    } catch (error) {
+      this.logger.warn({ err: error }, `Falha de rede ao ${action} no Graph`);
+      return { kind: 'UNAVAILABLE', reason: 'Falha de rede ao consultar o Microsoft Graph.' };
+    }
+    if (response.status === 403) return { kind: 'FORBIDDEN' };
+    if (response.status === 404 || response.status === 400) return { kind: 'NOT_FOUND' };
+    if (!response.ok) {
+      this.logger.warn(
+        { status: response.status },
+        `Graph respondeu status inesperado ao ${action}`,
+      );
+      return { kind: 'UNAVAILABLE', reason: `Microsoft Graph respondeu HTTP ${response.status}.` };
+    }
+    try {
+      return { kind: 'OK', payload: response.status === 204 ? null : await response.json() };
+    } catch (error) {
+      this.logger.warn({ err: error }, 'Resposta do Graph não é JSON');
+      return { kind: 'UNAVAILABLE', reason: 'Resposta do Microsoft Graph é inválida.' };
+    }
+  }
+
+  private mailboxUrl(): string {
+    return `${this.graphBaseUrl()}/users/${encodeURIComponent(this.config.mailbox)}`;
+  }
+
   /** GET JSON com a mesma classificação de erros de `listAttachmentsById`. */
   private async getJson(
     url: string,
@@ -293,6 +457,7 @@ export class GraphMailAttachmentProvider implements MailAttachmentProvider, Mail
   ): Promise<
     | { kind: 'OK'; payload: unknown }
     | { kind: 'NOT_FOUND' }
+    | { kind: 'FORBIDDEN' }
     | { kind: 'UNAVAILABLE'; reason: string }
   > {
     let response: Response;
@@ -305,6 +470,9 @@ export class GraphMailAttachmentProvider implements MailAttachmentProvider, Mail
     } catch (error) {
       this.logger.warn({ err: error }, `Falha de rede ao ${action} no Graph`);
       return { kind: 'UNAVAILABLE', reason: 'Falha de rede ao consultar o Microsoft Graph.' };
+    }
+    if (response.status === 403) {
+      return { kind: 'FORBIDDEN' };
     }
     if (response.status === 404 || response.status === 400) {
       return { kind: 'NOT_FOUND' };

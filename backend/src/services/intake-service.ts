@@ -14,6 +14,7 @@ import type {
 import type { IntakeChannel, IntakeEventKind } from '@/domain/enums';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '@/domain/errors/app-error';
 import type { MailAttachmentProvider } from '@/domain/mail/mail-attachment-provider';
+import type { MailboxOrganizer } from '@/domain/mail/mailbox-organizer';
 import type {
   MailboxAttachmentSummary,
   MailboxMessageSummary,
@@ -45,6 +46,13 @@ export interface IntakeServiceDeps {
   mailAttachmentProvider: MailAttachmentProvider | null;
   /** `null` = `GRAPH_INTAKE_ENABLED=false`; `/intake/mailbox/*` responde 503 (docs/13, decisão 9). */
   mailboxReader: MailboxReader | null;
+  /**
+   * `null` = `GRAPH_ORGANIZE_ENABLED=false`. Com organizer, o e-mail que virou
+   * processo/documento é copiado para `organizeFolder/<Organização>` (docs/13,
+   * decisão 12) — best-effort: falha vira aviso, nunca erro.
+   */
+  mailboxOrganizer: MailboxOrganizer | null;
+  organizeFolder: string;
   /** Mesmo limite do upload web (`MAX_UPLOAD_SIZE_MB`); anexo maior é pulado com aviso. */
   maxAttachmentBytes: number;
 }
@@ -290,6 +298,17 @@ export function cleanBodyText(raw: string, maxChars: number): { text: string; tr
   return { text: `${text.slice(0, maxChars).trimEnd()}\n[…]`, truncated: true };
 }
 
+/** Nome de pasta aceito pelo Exchange: sem `\\ / : * ? " < > |`, sem espaços nas pontas, até 100 caracteres. */
+export function sanitizeFolderName(name: string): string {
+  const cleaned = name
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 100)
+    .trim();
+  return cleaned.length > 0 ? cleaned : 'Sem organização';
+}
+
 function senderMatches(from: MailboxMessageSummary['from'], terms: string[]): boolean {
   const haystack = `${from.email ?? ''} ${from.name ?? ''}`.toLowerCase();
   return terms.some((term) => term.length > 0 && haystack.includes(term));
@@ -398,6 +417,7 @@ export class IntakeService {
       }
 
       const documentIds = await this.uploadFiles(processId, actorId, files);
+      await this.organizeMessage(input.source, processId, warnings);
 
       return this.complete(event, processId, {
         documentIds,
@@ -441,6 +461,7 @@ export class IntakeService {
       if (input.addReferences && input.addReferences.length > 0) {
         await this.appendReferences(processId, actorId, input.addReferences, warnings);
       }
+      await this.organizeMessage(input.source, processId, warnings);
 
       return this.complete(event, processId, {
         documentIds,
@@ -1287,6 +1308,58 @@ export class IntakeService {
         .map((company) => company.id),
     );
     return candidates.filter((item) => inOrganization.has(item.clientCompany.id));
+  }
+
+  // ── Cópia do e-mail para a pasta da organização (docs/13, decisão 12) ─
+
+  /**
+   * Best-effort: o processo já está gravado; uma falha aqui (permissão,
+   * Graph fora) vira aviso no resultado e no evento, nunca erro.
+   */
+  private async organizeMessage(
+    source: IntakeSource,
+    processId: string,
+    warnings: string[],
+  ): Promise<void> {
+    const organizer = this.deps.mailboxOrganizer;
+    if (!organizer) return;
+
+    const process = await this.deps.processRepository.findRawById(processId, ALL);
+    const company = process
+      ? await this.deps.companyRepository.findById(process.clientCompanyId)
+      : null;
+    const organization = company
+      ? await this.deps.organizationRepository.findById(company.organizationId)
+      : null;
+    const folderName = sanitizeFolderName(
+      organization?.name ?? company?.legalName ?? 'Sem organização',
+    );
+
+    try {
+      const outcome = await organizer.copyMessageToFolder(source.externalId, [
+        this.deps.organizeFolder,
+        folderName,
+      ]);
+      switch (outcome.kind) {
+        case 'OK':
+          return;
+        case 'FORBIDDEN':
+          warnings.push(
+            `E-mail não copiado para "${this.deps.organizeFolder}/${folderName}": o app não tem permissão de escrita na caixa (Application Mail.ReadWrite).`,
+          );
+          return;
+        case 'MESSAGE_NOT_FOUND':
+          warnings.push(`E-mail não copiado para a pasta: mensagem não encontrada na caixa.`);
+          return;
+        case 'UNAVAILABLE':
+          warnings.push(`E-mail não copiado para a pasta: ${outcome.reason}`);
+          return;
+      }
+    } catch (error) {
+      warnings.push(
+        `E-mail não copiado para a pasta: ${error instanceof Error ? error.message : 'erro desconhecido'}.`,
+      );
+    }
   }
 
   // ── Identificadores novos na referência (docs/13, decisão 11) ─────

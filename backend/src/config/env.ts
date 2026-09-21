@@ -143,6 +143,9 @@ export const envSchema = z.object({
   /** UPN da caixa lida pelo agente (a mesma que o conector lê), ex.: opusoperacional@opusce.com.br. */
   GRAPH_MAILBOX: z.string().optional(),
   GRAPH_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  /** Copiar o e-mail processado para `GRAPH_ORGANIZE_FOLDER/<Organização>` (docs/13, decisão 12). Exige Mail.ReadWrite. */
+  GRAPH_ORGANIZE_ENABLED: booleanFromEnv(false),
+  GRAPH_ORGANIZE_FOLDER: z.string().trim().min(1).max(100).default('Processos IA'),
 });
 
 const refinedEnvSchema = envSchema.superRefine((data, ctx) => {

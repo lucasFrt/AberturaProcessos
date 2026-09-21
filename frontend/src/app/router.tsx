@@ -11,6 +11,7 @@ import { OAuthCallbackPage } from '@/features/auth/pages/OAuthCallbackPage';
 import { PendingPage } from '@/features/auth/pages/PendingPage';
 import { RegisterPage } from '@/features/auth/pages/RegisterPage';
 import { DashboardPage } from '@/features/dashboard/pages/DashboardPage';
+import { IntakeEventsPage } from '@/features/intake/pages/IntakeEventsPage';
 import { BoardPage } from '@/features/processes/pages/BoardPage';
 import { NewProcessPage } from '@/features/processes/pages/NewProcessPage';
 import { ProcessListPage } from '@/features/processes/pages/ProcessListPage';
@@ -37,6 +38,10 @@ export function AppRouter(): ReactElement {
           <Route path="/processes" element={<ProcessListPage />} />
           <Route path="/processes/new" element={<NewProcessPage />} />
           <Route path="/processes/:id" element={<BoardPage />} />
+
+          <Route element={<RequireRole roles={['OPERATIONAL', 'ADMIN']} />}>
+            <Route path="/intake" element={<IntakeEventsPage />} />
+          </Route>
 
           <Route element={<RequireRole roles={['ADMIN']} />}>
             <Route path="/dashboard" element={<DashboardPage />} />

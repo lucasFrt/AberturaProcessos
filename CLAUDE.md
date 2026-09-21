@@ -131,6 +131,10 @@ container.ts  composição manual de dependências (ver acima)
   vira `IntakeEvent` `IGNORED`/`ESCALATED` via `POST /intake/events/skip`, com o motivo (docs/13,
   decisão 9). A retentativa de `FAILED` é pela lista `status=FAILED`, não pelo cursor. Nada de
   pasta, regra ou categoria no Outlook — a caixa em uso não é tocada.
+- **Sem relatório por e-mail** (docs/13, decisão 12): o backend copia o e-mail processado para
+  `Processos IA/<Organização>` na caixa (`MailboxOrganizer`, best-effort, exige
+  `Application Mail.ReadWrite` + `GRAPH_ORGANIZE_ENABLED`), e o operacional acompanha pela tela
+  `/intake` do front. A rotina não tem conector nenhum — só a API.
 - **Documento de embarque de qualquer remetente externo vai para o processo que já existe** (docs/13,
   decisão 11): `addReferences` em `/intake/attachments` acrescenta identificadores à `reference`.
   Um processo = um embarque = um BL; processo só nasce a pedido do cliente — documento sem processo

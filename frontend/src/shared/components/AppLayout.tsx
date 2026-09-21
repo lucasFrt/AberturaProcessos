@@ -6,6 +6,7 @@ import {
   LogoutOutlined,
   OrderedListOutlined,
   PlusCircleOutlined,
+  RobotOutlined,
   SolutionOutlined,
   TeamOutlined,
   UserOutlined,
@@ -44,6 +45,14 @@ function useMenuItems(): MenuProps['items'] {
         label: <Link to="/processes/new">Novo processo</Link>,
       },
     ];
+
+    if (role === 'OPERATIONAL' || role === 'ADMIN') {
+      items.push({
+        key: '/intake',
+        icon: <RobotOutlined />,
+        label: <Link to="/intake">Intake IA</Link>,
+      });
+    }
 
     if (role === 'ADMIN') {
       items.push(

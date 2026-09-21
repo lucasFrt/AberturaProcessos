@@ -1,5 +1,6 @@
 import { FakeCnpjLookupProvider } from '../helpers/fakes/fake-cnpj-lookup-provider';
 import { FakeMailAttachmentProvider } from '../helpers/fakes/fake-mail-attachment-provider';
+import { FakeMailboxOrganizer } from '../helpers/fakes/fake-mailbox-organizer';
 import { FakeMailboxReader } from '../helpers/fakes/fake-mailbox-reader';
 import { FakeStorageProvider } from '../helpers/fakes/fake-storage-provider';
 import { InMemoryCompanyRepository } from '../helpers/fakes/in-memory-company-repository';
@@ -16,7 +17,7 @@ import type { Company } from '@/domain/entities/company';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '@/domain/errors/app-error';
 import { DocumentService } from '@/services/document-service';
 import type { AttachIntakeInput, CreateProcessIntakeInput } from '@/services/intake-service';
-import { cleanBodyText } from '@/services/intake-service';
+import { cleanBodyText, sanitizeFolderName } from '@/services/intake-service';
 import { IntakeService } from '@/services/intake-service';
 import { ProcessService } from '@/services/process-service';
 
@@ -38,6 +39,7 @@ interface Context {
   cnpjLookupProvider: FakeCnpjLookupProvider;
   mailAttachmentProvider: FakeMailAttachmentProvider;
   mailboxReader: FakeMailboxReader;
+  mailboxOrganizer: FakeMailboxOrganizer;
   clientOrganizationId: string;
 }
 
@@ -56,6 +58,7 @@ async function buildContext(
   const cnpjLookupProvider = new FakeCnpjLookupProvider();
   const mailAttachmentProvider = new FakeMailAttachmentProvider();
   const mailboxReader = new FakeMailboxReader();
+  const mailboxOrganizer = new FakeMailboxOrganizer();
 
   const stage = await stageRepository.create({
     name: 'Entrada',
@@ -107,6 +110,8 @@ async function buildContext(
     cnpjLookupProvider: overrides.cnpjLookup === false ? null : cnpjLookupProvider,
     mailAttachmentProvider: overrides.mailAttachments === false ? null : mailAttachmentProvider,
     mailboxReader: overrides.mailAttachments === false ? null : mailboxReader,
+    mailboxOrganizer: overrides.mailAttachments === false ? null : mailboxOrganizer,
+    organizeFolder: 'Processos IA',
     maxAttachmentBytes: 1024,
   });
 
@@ -122,6 +127,7 @@ async function buildContext(
     cnpjLookupProvider,
     mailAttachmentProvider,
     mailboxReader,
+    mailboxOrganizer,
     clientOrganizationId: clientOrganization.id,
   };
 }
@@ -643,6 +649,48 @@ describe('IntakeService (docs/13)', () => {
       expect(
         cleanBodyText(`Segue o documento.\n${'_'.repeat(30)}\nFrom: x\nquoted`, 100).text,
       ).toBe('Segue o documento.');
+    });
+  });
+
+  describe('cópia do e-mail para a pasta da organização (decisão 12)', () => {
+    it('ao criar e ao complementar, copia o e-mail para <pasta>/<Organização>; falha vira aviso', async () => {
+      const ctx = await buildContext();
+      await seedCompany(ctx, VALID_CNPJ, ctx.clientOrganizationId);
+
+      const created = await ctx.service.createProcessFromEmail(ACTOR, createInput());
+      expect(ctx.mailboxOrganizer.copies).toEqual([
+        { messageId: 'msg-1', folderPath: ['Processos IA', 'Cliente X'] },
+      ]);
+      expect(created.warnings.some((w) => w.includes('não copiado'))).toBe(false);
+
+      ctx.mailboxOrganizer.outcome = { kind: 'FORBIDDEN' };
+      const attached = await ctx.service.attachToProcess(
+        ACTOR,
+        attachInput({ processId: created.process.id, note: 'segue HBL' }),
+      );
+      expect(ctx.mailboxOrganizer.copies[1]).toEqual({
+        messageId: 'msg-2',
+        folderPath: ['Processos IA', 'Cliente X'],
+      });
+      expect(attached.event.status).toBe('COMPLETED');
+      expect(attached.warnings.some((w) => w.includes('Mail.ReadWrite'))).toBe(true);
+      // O aviso fica gravado no evento, para o operacional ver depois.
+      expect(attached.event.result?.warnings.some((w) => w.includes('Mail.ReadWrite'))).toBe(true);
+    });
+
+    it('sem organizer (GRAPH_ORGANIZE_ENABLED=false) nada é copiado e nada avisa', async () => {
+      const ctx = await buildContext({ mailAttachments: false });
+      await seedCompany(ctx, VALID_CNPJ, ctx.clientOrganizationId);
+      const created = await ctx.service.createProcessFromEmail(ACTOR, createInput());
+      expect(ctx.mailboxOrganizer.copies).toHaveLength(0);
+      expect(created.warnings.some((w) => w.includes('copiado'))).toBe(false);
+    });
+
+    it('sanitizeFolderName remove caracteres proibidos e limita o tamanho', () => {
+      expect(sanitizeFolderName('  Casa & Novidade  ')).toBe('Casa & Novidade');
+      expect(sanitizeFolderName('FU XING / COMERCIO: "A" <B>')).toBe('FU XING - COMERCIO- -A- -B-');
+      expect(sanitizeFolderName('   ')).toBe('Sem organização');
+      expect(sanitizeFolderName('x'.repeat(150))).toHaveLength(100);
     });
   });
 

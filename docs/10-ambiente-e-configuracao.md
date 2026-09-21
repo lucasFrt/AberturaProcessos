@@ -190,12 +190,16 @@ GRAPH_CLIENT_ID=
 GRAPH_CLIENT_SECRET=
 GRAPH_MAILBOX=opusoperacional@opusce.com.br
 GRAPH_TIMEOUT_MS=30000
+# Cópia do e-mail processado para "<pasta>/<Organização>" (docs/13, decisão 12).
+# Exige o papel Exchange "Application Mail.ReadWrite"; com Mail.Read só gera aviso.
+GRAPH_ORGANIZE_ENABLED=false
+GRAPH_ORGANIZE_FOLDER=Processos IA
 ```
 
 Sobre as variáveis `GRAPH_*` (docs/13, seção "Configuração"):
 
-- São credenciais de **aplicação** (client credentials) de um registro próprio no Entra ID, com a
-  permissão de aplicação `Mail.Read` e consentimento de administrador. **Não** reaproveitar
+- São credenciais de **aplicação** (client credentials) de um registro próprio no Entra ID, com o
+  papel Exchange `Application Mail.ReadWrite` restrito à caixa (RBAC for Applications, docs/13). **Não** reaproveitar
   `MICROSOFT_CLIENT_ID` do login social: aquele é um app delegado, com permissões de usuário.
 - Obrigatório restringir o app à caixa do agente com `New-ApplicationAccessPolicy` no Exchange
   Online; sem isso `Mail.Read` de aplicação lê todas as caixas do tenant.

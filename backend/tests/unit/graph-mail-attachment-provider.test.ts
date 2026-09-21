@@ -300,6 +300,58 @@ describe('GraphMailAttachmentProvider', () => {
     expect(await provider.getMessage('nope')).toEqual({ kind: 'MESSAGE_NOT_FOUND' });
   });
 
+  it('copyMessageToFolder acha/cria as pastas e copia; a segunda cópia reaproveita os ids', async () => {
+    const mailbox = 'https://graph.test/v1.0/users/processos%40opusce.com.br';
+    const calls: Array<{ url: string; method: string; body: unknown }> = [];
+    const { provider } = buildProvider({
+      [TOKEN_URL]: () => jsonResponse({ access_token: 'tok', expires_in: 3600 }),
+      [`${mailbox}/mailFolders/root-1/childFolders`]: (init) => {
+        calls.push({ url: 'child', method: init?.method ?? 'GET', body: init?.body ?? null });
+        return init?.method === 'POST'
+          ? jsonResponse({ id: 'org-1', displayName: 'Casa & Novidade' }, 201)
+          : jsonResponse({ value: [] });
+      },
+      [`${mailbox}/mailFolders`]: (init) => {
+        calls.push({ url: 'root', method: init?.method ?? 'GET', body: init?.body ?? null });
+        return jsonResponse({ value: [{ id: 'root-1' }] });
+      },
+      [`${mailbox}/messages/m1/copy`]: (init) => {
+        calls.push({ url: 'copy', method: init?.method ?? 'GET', body: init?.body ?? null });
+        return jsonResponse({ id: 'm1-copy' }, 201);
+      },
+      [`${mailbox}/messages/m2/copy`]: () => jsonResponse({ id: 'm2-copy' }, 201),
+    });
+
+    const first = await provider.copyMessageToFolder('m1', ['Processos IA', 'Casa & Novidade']);
+    expect(first).toEqual({ kind: 'OK', copiedMessageId: 'm1-copy' });
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      'GET root',
+      'GET child',
+      'POST child',
+      'POST copy',
+    ]);
+    expect(JSON.parse(String(calls[3]?.body))).toEqual({ destinationId: 'org-1' });
+
+    calls.length = 0;
+    const second = await provider.copyMessageToFolder('m2', ['Processos IA', 'Casa & Novidade']);
+    expect(second.kind).toBe('OK');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('copyMessageToFolder com 403 (só Mail.Read) devolve FORBIDDEN', async () => {
+    const mailbox = 'https://graph.test/v1.0/users/processos%40opusce.com.br';
+    const { provider } = buildProvider({
+      [TOKEN_URL]: () => jsonResponse({ access_token: 'tok', expires_in: 3600 }),
+      [`${mailbox}/mailFolders`]: () => jsonResponse({ value: [{ id: 'root-1' }] }),
+      [`${mailbox}/mailFolders/root-1/childFolders`]: () =>
+        jsonResponse({ value: [{ id: 'org-1' }] }),
+      [`${mailbox}/messages/m1/copy`]: () => new Response('', { status: 403 }),
+    });
+    expect(await provider.copyMessageToFolder('m1', ['Processos IA', 'Org'])).toEqual({
+      kind: 'FORBIDDEN',
+    });
+  });
+
   it('anexo sem contentType recebe application/octet-stream', async () => {
     const { provider } = buildProvider({
       [TOKEN_URL]: () => jsonResponse({ access_token: 'tok', expires_in: 3600 }),

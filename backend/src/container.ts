@@ -251,8 +251,10 @@ export function buildContainer(prisma: PrismaClient): Container {
   const intakeService = new IntakeService({
     intakeEventRepository,
     intakeCursorRepository,
-    // A mesma instância do Graph lê anexos e a caixa (token compartilhado).
+    // A mesma instância do Graph lê anexos, lê a caixa e copia para pastas (token compartilhado).
     mailboxReader: mailAttachmentProvider,
+    mailboxOrganizer: env.GRAPH_ORGANIZE_ENABLED ? mailAttachmentProvider : null,
+    organizeFolder: env.GRAPH_ORGANIZE_FOLDER,
     processRepository,
     companyRepository,
     organizationRepository,

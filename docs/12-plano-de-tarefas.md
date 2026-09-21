@@ -487,6 +487,27 @@ organização + empresa pendentes sem `EmailDomain`, com nome existente usa a em
 `addReferences` acrescenta só o que falta, respeita 255 caracteres com aviso e gera
 `PROCESS_UPDATED`; `npm test` no MCP lista as dez ferramentas.
 
+---
+
+### Tarefa 29 — Pasta por organização na caixa e tela "Intake IA" (sem relatório por e-mail)
+
+Decisão 12 (doc 13). (a) `MailboxOrganizer` no domínio, implementado no provider Graph: acha/cria
+`GRAPH_ORGANIZE_FOLDER/<Organização>` (cache de ids) e copia a mensagem
+(`POST /messages/{id}/copy`); `IntakeService` chama depois de criar/complementar, best-effort
+(403 → aviso "sem permissão", nunca erro); `GRAPH_ORGANIZE_ENABLED`/`GRAPH_ORGANIZE_FOLDER` no
+env. (b) Front: página `/intake` (OPERATIONAL e ADMIN) listando `GET /intake/events` com
+resultado, motivo, avisos, remetente, link para o processo, filtros e posição do cursor; item
+"Intake IA" no menu. (c) Prompt da rotina sem conector e sem envio de e-mail. (d) Papel Exchange
+passa a `Application Mail.ReadWrite`.
+
+**Refs:** doc 13 (decisão 12 e "Configuração"), doc 10 (`GRAPH_ORGANIZE_*`), doc 08.
+
+**Aceite:** ao criar e ao complementar, a cópia é pedida com `['Processos IA', '<Organização>']`;
+`FORBIDDEN` vira aviso no resultado e no evento e o intake conclui; sem organizer nada é copiado
+nem avisado; `sanitizeFolderName` remove `\ / : * ? " < > |` e limita a 100; o provider acha/cria
+as pastas em ordem e reaproveita ids na segunda cópia; 403 → `FORBIDDEN`; a tela lista eventos
+com filtros e o front compila sem erro.
+
 
 ## Ordem e paralelismo
 

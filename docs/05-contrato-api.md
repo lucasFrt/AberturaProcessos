@@ -587,7 +587,9 @@ Abre um processo a partir de um e-mail (docs/13, decisões 3 a 5).
 }
 ```
 
-`warnings` lista tudo que o agente deve relatar e o ADMIN revisar. Erros: `400 INVALID_CNPJ` /
+`warnings` lista tudo que o agente deve relatar e o ADMIN revisar — inclusive "E-mail não copiado
+para a pasta…" quando `GRAPH_ORGANIZE_ENABLED=true` e a cópia para `Processos IA/<Organização>`
+falhou (docs/13, decisão 12; a cópia é best-effort e nunca falha o intake). Erros: `400 INVALID_CNPJ` /
 `INVALID_CPF` / `COMPANY_REQUIRED`, `409 COMPANY_INACTIVE` / `COMPANY_AMBIGUOUS`,
 `409 INTAKE_IN_PROGRESS`, `404 MAIL_MESSAGE_NOT_FOUND`, `503 MAIL_ATTACHMENTS_DISABLED` /
 `MAIL_ATTACHMENTS_UNAVAILABLE`.
