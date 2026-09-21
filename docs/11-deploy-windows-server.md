@@ -159,6 +159,59 @@ JWT_ACCESS_SECRET=<48 bytes aleatórios, exclusivo desta instalação>
 Como front e API compartilham o host em produção, `API_BASE_URL` e `FRONTEND_URL` são iguais, e o
 CORS praticamente não é exercitado (mesma origem).
 
+## Alternativa: deploy a partir do clone do repositório
+
+Quando o servidor tem Git e o repositório é clonado nele (ex.: `C:\apps\AberturaProcessos`), não é
+preciso copiar `dist\` de outra máquina: build e atualização acontecem no próprio clone e os
+serviços apontam para dentro dele. É o caminho usado na instalação atual.
+
+Recomendações que mudam em relação à seção "Publicação":
+
+- Clonar **fora** de perfis de usuário (não em `Desktop`): `C:\apps\AberturaProcessos` ou
+  `D:\AberturaProcessos\repo`. `uploads\` e `logs\` continuam fora do clone (`git clean`/redeploy
+  nunca os toca).
+- `npm ci` **completo** em `backend/` (sem `--omit=dev`): o build (`tsc`), o `prisma migrate` e o
+  `seed` (`tsx`) precisam das dependências de desenvolvimento.
+- Não rodar `npm init` na raiz — o `package.json` da raiz já existe (Husky/lint-staged); `npm init`
+  o sobrescreve. Se aconteceu: `git checkout -- package.json`.
+
+Primeira instalação:
+
+```powershell
+cd C:\apps\AberturaProcessos
+git checkout master
+
+cd backend
+Copy-Item .env.example .env       # e editar com os valores de produção (seção "Publicação")
+npm ci
+npm run build                     # backend\dist\
+npx prisma generate
+npx prisma migrate deploy
+npm run seed
+
+cd ..\frontend
+npm ci
+npm run build                     # frontend\dist\ (inclui public\web.config)
+```
+
+Serviços NSSM: mesmos comandos da seção seguinte, com `AppDirectory` em
+`C:\apps\AberturaProcessos\backend` (o programa continua `dist\http\server.js` e
+`dist\workers\index.js`). Site do IIS: physical path `C:\apps\AberturaProcessos\frontend\dist`.
+
+Atualização de versão:
+
+```powershell
+Stop-Service AberturaProcessos-Worker, AberturaProcessos-API
+cd C:\apps\AberturaProcessos
+git pull
+cd backend;  npm ci; npm run build; npx prisma generate; npx prisma migrate deploy
+cd ..\frontend; npm ci; npm run build
+Start-Service AberturaProcessos-API, AberturaProcessos-Worker
+Invoke-RestMethod http://127.0.0.1:3000/health/ready
+```
+
+Backup do banco antes do `migrate deploy` continua obrigatório (seção "Atualização de versão").
+
 ## Serviços com NSSM
 
 ### API
@@ -221,7 +274,9 @@ Dependência de serviços — a API não deve subir antes do SQL Server:
 2. Confirmar que **Application Request Routing** está com proxy habilitado:
    IIS Manager → nó do servidor → Application Request Routing Cache → Server Proxy Settings →
    marcar "Enable proxy".
-3. Colocar o `web.config` abaixo em `D:\AberturaProcessos\frontend\web.config`.
+3. O `web.config` abaixo está versionado em `frontend/public/web.config` — o Vite o copia para
+   `frontend/dist/` a cada build, então ele chega ao IIS junto com o front (não precisa copiar à
+   mão; se o site apontar para `frontend\dist`, já está lá).
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
