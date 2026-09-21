@@ -3,7 +3,7 @@ import type { ConnectionOptions } from 'bullmq';
 import type { Logger } from 'pino';
 
 import type { EmailJobData, QueueProvider } from '@/domain/queue/queue-provider';
-import { DEFAULT_JOB_OPTIONS, QUEUE_NAMES } from '@/infra/queue/queues';
+import { DEFAULT_JOB_OPTIONS, QUEUE_NAMES, QUEUE_PREFIX } from '@/infra/queue/queues';
 
 /**
  * Implementação real de `QueueProvider` sobre BullMQ (docs/07). Reaproveita
@@ -18,7 +18,7 @@ export class BullMqQueueProvider implements QueueProvider {
     connection: ConnectionOptions,
     private readonly logger: Logger,
   ) {
-    this.queue = new Queue<EmailJobData>(QUEUE_NAMES.EMAIL, { connection });
+    this.queue = new Queue<EmailJobData>(QUEUE_NAMES.EMAIL, { connection, prefix: QUEUE_PREFIX });
   }
 
   async enqueueEmail(job: EmailJobData): Promise<void> {

@@ -6,7 +6,7 @@ import type { Logger } from 'pino';
 import type { Mailer } from '@/domain/mail/mailer';
 import { EMAIL_JOBS } from '@/domain/queue/queue-provider';
 import type { EmailJobData } from '@/domain/queue/queue-provider';
-import { QUEUE_NAMES } from '@/infra/queue/queues';
+import { QUEUE_NAMES, QUEUE_PREFIX } from '@/infra/queue/queues';
 import {
   renderProcessStageChangedEmail,
   renderUserPendingApprovalEmail,
@@ -68,7 +68,7 @@ export function createEmailWorker(
         }
       }
     },
-    { connection, concurrency: 5 },
+    { connection, prefix: QUEUE_PREFIX, concurrency: 5 },
   );
 
   worker.on('failed', (job, error) => {

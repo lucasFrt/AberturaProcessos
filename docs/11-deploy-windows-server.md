@@ -88,7 +88,28 @@ DATABASE_URL="sqlserver://localhost:1433;database=abertura_processos;user=ap_app
 `trustServerCertificate=true` é aceitável para conexão local (loopback). Se o SQL Server estiver em
 outro host, instalar um certificado válido e usar `trustServerCertificate=false`.
 
-## Redis via Docker
+## Redis
+
+### Redis já existente no servidor (caso atual)
+
+O servidor de produção já tem um Redis servindo outra aplicação (Nexus), exposto em
+`127.0.0.1:6379` sem senha, com as filas daquele sistema no DB 0. A API reaproveita esse Redis com
+isolamento por configuração — **nunca** rodar `FLUSHALL`/`FLUSHDB` nele:
+
+```dotenv
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_DB=1
+REDIS_KEY_PREFIX=ap
+```
+
+`REDIS_DB=1` separa o keyspace; `REDIS_KEY_PREFIX=ap` faz as chaves do BullMQ virarem `ap:email:*`
+(a outra aplicação também tem uma fila chamada `email`). Validar com protocolo, não com
+`Test-NetConnection` (o relay do WSL responde na porta mesmo com o Redis parado):
+`Invoke-RestMethod http://127.0.0.1:3000/health/ready` depois de subir a API.
+
+### Redis via Docker (instalação nova)
 
 ```powershell
 docker run -d --name ap-redis --restart unless-stopped `

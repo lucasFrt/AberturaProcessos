@@ -17,6 +17,8 @@ function buildRedisConnectionOptions() {
   const base = {
     host: env.REDIS_HOST,
     port: env.REDIS_PORT,
+    // DB lógico próprio: convivência com outras aplicações no mesmo Redis (docs/10).
+    db: env.REDIS_DB,
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
     lazyConnect: true,

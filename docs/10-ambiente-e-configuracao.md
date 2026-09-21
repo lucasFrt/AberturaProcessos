@@ -127,6 +127,10 @@ MICROSOFT_CALLBACK_URL=http://localhost:3000/api/v1/auth/microsoft/callback
 REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_PASSWORD=
+# Redis compartilhado com outra aplicação: DB lógico (0-15) e prefixo das
+# chaves do BullMQ. Produtor (API) e worker precisam do mesmo valor.
+REDIS_DB=0
+REDIS_KEY_PREFIX=ap
 EMAIL_QUEUE_CONCURRENCY=5
 
 # ── SMTP ────────────────────────────────────────────────────

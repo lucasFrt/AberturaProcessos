@@ -29,6 +29,18 @@ export const envSchema = z.object({
   REDIS_HOST: z.string().min(1).default('localhost'),
   REDIS_PORT: z.coerce.number().int().positive().default(6379),
   REDIS_PASSWORD: z.string().optional(),
+  /**
+   * Isolamento num Redis compartilhado com outras aplicações (docs/10): DB
+   * lógico e prefixo das chaves do BullMQ. Sem isso, a fila `email` desta
+   * API e a de outro sistema no mesmo servidor gravariam nas mesmas chaves.
+   */
+  REDIS_DB: z.coerce.number().int().min(0).max(15).default(0),
+  REDIS_KEY_PREFIX: z
+    .string()
+    .trim()
+    .min(1)
+    .regex(/^[A-Za-z0-9_-]+$/, 'REDIS_KEY_PREFIX aceita apenas letras, números, _ e -.')
+    .default('ap'),
 
   JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET precisa de ao menos 32 caracteres.'),
   JWT_ACCESS_TTL: z.string().min(1).default('15m'),
