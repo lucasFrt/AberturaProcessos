@@ -159,12 +159,12 @@ export function registerTools(server: McpServer, api: ApiClient): void {
     {
       title: 'Procurar processo existente',
       description:
-        'Procura processos por código (PRC-2026-00042) ou por referência citada no e-mail, opcionalmente filtrando pelo CNPJ/CPF do cliente. Use quando o e-mail parece ser complemento de um processo já aberto ("segue documento do processo X") para confirmar qual é antes de anexar. matchedBy: CODE e REFERENCE são exatos; PARTIAL é aproximado.',
+        'Procura processos por código (PRC-2026-00042), por referência ou por qualquer identificador do embarque citado no e-mail (número da Opus "31435/26", HBL, MBL, contêiner, DI, CE, fatura, referência do cliente) — um identificador por chamada. O servidor consulta o índice local e, se não achar, o iLog (sistema de comex), espelhando o processo na hora. matchedBy: CODE/REFERENCE exatos; OPUS_NUMBER/HBL/MBL/CONTAINER/INVOICE/DI/CE/DTA/CLIENT_REF/OTHER = casou por identificador (exato); PARTIAL é aproximado. Processos com ilogNumber preenchido existem no iLog.',
       inputSchema: {
         ref: z
           .string()
           .optional()
-          .describe('Código ou referência do processo, como está no e-mail.'),
+          .describe('Código, referência ou UM identificador do embarque, como está no e-mail.'),
         companyDocument: z
           .string()
           .optional()
@@ -181,7 +181,7 @@ export function registerTools(server: McpServer, api: ApiClient): void {
     {
       title: 'Abrir processo a partir de um e-mail',
       description:
-        'Abre um processo novo com os dados extraídos do e-mail. A empresa é identificada pelo CNPJ/CPF: se não estiver cadastrada, o servidor cadastra (empresa, organização e domínio) e relata em warnings. Idempotente por externalId: repetir a chamada para a mesma mensagem devolve duplicate=true sem criar nada. Anexos são baixados pelo servidor (fetchAttachments=true).',
+        'Abre um processo novo com os dados extraídos do e-mail. A empresa é identificada pelo CNPJ/CPF: se não estiver cadastrada, o servidor cadastra (empresa, organização e domínio) e relata em warnings. Se a mesma empresa já tem processo com um dos identificadores (aberto antes ou espelhado do iLog), o servidor anexa a ele em vez de duplicar (event.kind=ATTACHMENT, aviso em warnings). Idempotente por externalId: repetir a chamada para a mesma mensagem devolve duplicate=true sem criar nada. Anexos são baixados pelo servidor (fetchAttachments=true).',
       inputSchema: {
         externalId: externalIdField,
         internetMessageId: internetMessageIdField,
@@ -226,6 +226,13 @@ export function registerTools(server: McpServer, api: ApiClient): void {
           .describe(
             'Resumo fiel do corpo do e-mail com tudo que o operacional precisa saber (contatos, prazos, pendências). Até 10.000 caracteres.',
           ),
+        identifiers: z
+          .array(z.string().min(3).max(100))
+          .max(20)
+          .optional()
+          .describe(
+            'Todos os identificadores do embarque que o e-mail traz, um por item, além da reference: número da Opus, HBL, MBL, contêineres, número do agente, fatura, DI, CE. Alimentam o índice que casa os próximos documentos com este processo.',
+          ),
         ...attachmentFields,
       },
     },
@@ -249,6 +256,7 @@ export function registerTools(server: McpServer, api: ApiClient): void {
           : null,
         reference: input.reference,
         additionalInfo: input.additionalInfo ?? null,
+        identifiers: input.identifiers ?? null,
         fetchAttachments: input.fetchAttachments,
       };
       const files = input.filePaths ?? [];
@@ -275,7 +283,9 @@ export function registerTools(server: McpServer, api: ApiClient): void {
         processRef: z
           .string()
           .optional()
-          .describe('Código (PRC-2026-00042) ou referência do processo, como está no e-mail.'),
+          .describe(
+            'Código (PRC-2026-00042), referência ou UM identificador do embarque (HBL, contêiner, número da Opus...), como está no e-mail. O servidor resolve pelo índice e, se preciso, pelo iLog.',
+          ),
         processId: z
           .string()
           .optional()

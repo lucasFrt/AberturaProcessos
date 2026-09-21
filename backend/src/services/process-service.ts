@@ -1,5 +1,6 @@
 import type { AccessScope } from '@/domain/entities/access-scope';
 import type {
+  IlogLink,
   Process,
   ProcessBoardStageResult,
   ProcessDetail,
@@ -11,7 +12,9 @@ import type {
   UpdateProcessData,
 } from '@/domain/entities/process';
 import { toProcessListItem } from '@/domain/entities/process';
-import type { RecordSource } from '@/domain/enums';
+import type { ProcessIdentifierInput } from '@/domain/entities/process-identifier';
+import { extractIdentifierCandidates } from '@/domain/entities/process-identifier';
+import type { ProcessIdentifierSource, RecordSource } from '@/domain/enums';
 import {
   ConflictError,
   ForbiddenError,
@@ -24,11 +27,17 @@ import type { EmailJobData, QueueProvider } from '@/domain/queue/queue-provider'
 import type { RealtimeProvider } from '@/domain/realtime/realtime-provider';
 import type { CompanyRepository } from '@/domain/repositories/company-repository';
 import type { KanbanStageRepository } from '@/domain/repositories/kanban-stage-repository';
+import type { ProcessIdentifierRepository } from '@/domain/repositories/process-identifier-repository';
 import type { ProcessRepository } from '@/domain/repositories/process-repository';
 import type { UserRepository } from '@/domain/repositories/user-repository';
 
 export interface ProcessServiceDeps {
   processRepository: ProcessRepository;
+  /**
+   * Índice de identificadores do embarque (docs/15): alimentado a cada
+   * criação/edição de referência para o intake casar e-mails com exatidão.
+   */
+  processIdentifierRepository: ProcessIdentifierRepository;
   companyRepository: CompanyRepository;
   stageRepository: KanbanStageRepository;
   userRepository: UserRepository;
@@ -58,6 +67,13 @@ export interface CreateProcessInput {
   source?: RecordSource | undefined;
   requester?: { name: string | null; email: string | null } | null | undefined;
   receivedAt?: Date | null | undefined;
+  /** Vínculo com o iLog — só o espelho preenche (docs/15). */
+  ilog?: IlogLink | null | undefined;
+  /**
+   * Identificadores já classificados (docs/15). Ausente = extraídos da
+   * `reference` ("230/26 - DANGB26080406" → dois identificadores).
+   */
+  identifiers?: ProcessIdentifierInput[] | undefined;
 }
 
 export interface UpdateProcessInput {
@@ -65,6 +81,15 @@ export interface UpdateProcessInput {
   additionalInfo?: string | null | undefined;
   clientCompanyId?: string | undefined;
   requestingCompanyId?: string | null | undefined;
+  /** Quem assina os identificadores extraídos da nova `reference`; padrão MANUAL. */
+  identifierSource?: ProcessIdentifierSource | undefined;
+}
+
+/** Origem do processo → quem assina os identificadores extraídos dele (docs/15). */
+function identifierSourceOf(source: RecordSource): ProcessIdentifierSource {
+  if (source === 'ILOG') return 'ILOG';
+  if (source === 'EMAIL') return 'EMAIL';
+  return 'MANUAL';
 }
 
 /** `scope.companyIds` só existe quando `kind === 'COMPANIES'` — checagem centralizada aqui. */
@@ -115,6 +140,7 @@ export class ProcessService {
       throw new ValidationError('Não há etapas do Kanban cadastradas.');
     }
 
+    const source = input.source ?? 'WEB';
     const detail = await this.deps.processRepository.createWithHistory({
       reference: input.reference,
       additionalInfo: input.additionalInfo ?? null,
@@ -122,11 +148,21 @@ export class ProcessService {
       requestingCompanyId: input.requestingCompanyId ?? null,
       currentStageId: firstStage.id,
       createdById: actorId,
-      source: input.source ?? 'WEB',
+      source,
       requesterName: input.requester?.name ?? null,
       requesterEmail: input.requester?.email ?? null,
       receivedAt: input.receivedAt ?? null,
+      ilog: input.ilog ?? null,
     });
+
+    // Índice de identificadores (docs/15): o que veio classificado, senão o
+    // que dá para extrair da referência. Fora da transação de criação de
+    // propósito — é índice de busca, não parte do registro.
+    await this.deps.processIdentifierRepository.addForProcess(
+      detail.id,
+      identifierSourceOf(source),
+      input.identifiers ?? extractIdentifierCandidates(input.reference),
+    );
 
     // Emissão pós-commit (docs/07): só depois que `createWithHistory` já
     // persistiu o processo, nunca antes.
@@ -209,6 +245,16 @@ export class ProcessService {
       description: `Processo atualizado: ${diff.map((entry) => entry.field).join(', ')}.`,
       diff,
     });
+
+    // Referência nova traz identificadores novos; os antigos ficam (um HBL
+    // continua sendo daquele embarque mesmo que a referência mude).
+    if (data.reference !== undefined) {
+      await this.deps.processIdentifierRepository.addForProcess(
+        id,
+        input.identifierSource ?? 'MANUAL',
+        extractIdentifierCandidates(data.reference),
+      );
+    }
 
     // Emissão pós-commit (docs/07).
     this.deps.realtimeProvider?.emitProcessEvent(

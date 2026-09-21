@@ -5,6 +5,7 @@ import type {
   AssignResponsibleWithHistoryInput,
   CompanySummary,
   CreateProcessWithHistoryInput,
+  IlogLink,
   MoveStageWithHistoryInput,
   Process,
   ProcessBoardStageResult,
@@ -19,7 +20,13 @@ import type {
   UpdateProcessWithHistoryInput,
   UserSummary,
 } from '@/domain/entities/process';
-import type { HistoryAction, RecordSource } from '@/domain/enums';
+import type { ProcessIdentifier } from '@/domain/entities/process-identifier';
+import type {
+  HistoryAction,
+  ProcessIdentifierKind,
+  ProcessIdentifierSource,
+  RecordSource,
+} from '@/domain/enums';
 import { AppError } from '@/domain/errors/app-error';
 import type { Page, PaginationParams } from '@/domain/pagination';
 import type { ProcessRepository } from '@/domain/repositories/process-repository';
@@ -56,6 +63,7 @@ const DETAIL_INCLUDE = {
       toStage: { select: { id: true, name: true } },
     },
   },
+  identifiers: { orderBy: { createdAt: 'asc' as const } },
 } as const;
 
 type DetailRow = Prisma.ProcessGetPayload<{ include: typeof DETAIL_INCLUDE }>;
@@ -102,8 +110,21 @@ function mapListItem(row: ListItemRow): ProcessListItem {
     requesterName: row.requesterName,
     requesterEmail: row.requesterEmail,
     receivedAt: row.receivedAt,
+    ilogNumber: row.ilogNumber,
     stageChangedAt: row.stageChangedAt,
     completedAt: row.completedAt,
+    createdAt: row.createdAt,
+  };
+}
+
+function mapIdentifier(row: DetailRow['identifiers'][number]): ProcessIdentifier {
+  return {
+    id: row.id,
+    processId: row.processId,
+    kind: row.kind as ProcessIdentifierKind,
+    value: row.value,
+    normalized: row.normalized,
+    source: row.source as ProcessIdentifierSource,
     createdAt: row.createdAt,
   };
 }
@@ -151,12 +172,16 @@ function mapDetail(row: DetailRow): ProcessDetail {
     requesterName: row.requesterName,
     requesterEmail: row.requesterEmail,
     receivedAt: row.receivedAt,
+    ilogProcessId: row.ilogProcessId,
+    ilogNumber: row.ilogNumber,
+    ilogSyncedAt: row.ilogSyncedAt,
     stageChangedAt: row.stageChangedAt,
     completedAt: row.completedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     documents: row.documents.map(mapDocument),
     history: row.history.map(mapHistoryEntry),
+    identifiers: row.identifiers.map(mapIdentifier),
   };
 }
 
@@ -171,6 +196,9 @@ function toDomainProcess(row: Omit<Process, 'source'> & { source: string }): Pro
     requesterName: row.requesterName,
     requesterEmail: row.requesterEmail,
     receivedAt: row.receivedAt,
+    ilogProcessId: row.ilogProcessId,
+    ilogNumber: row.ilogNumber,
+    ilogSyncedAt: row.ilogSyncedAt,
     clientCompanyId: row.clientCompanyId,
     requestingCompanyId: row.requestingCompanyId,
     currentStageId: row.currentStageId,
@@ -199,13 +227,22 @@ function scopeWhere(scope: AccessScope): Prisma.ProcessWhereInput {
 function filtersWhere(filters: ProcessFilters): Prisma.ProcessWhereInput {
   return {
     ...(filters.stageId ? { currentStageId: filters.stageId } : {}),
+    ...(filters.ilogLinked !== undefined
+      ? { ilogProcessId: filters.ilogLinked ? { not: null } : null }
+      : {}),
     ...(filters.clientCompanyId ? { clientCompanyId: filters.clientCompanyId } : {}),
     ...(filters.responsibleId ? { responsibleId: filters.responsibleId } : {}),
     ...(filters.organizationId
       ? { clientCompany: { organizationId: filters.organizationId } }
       : {}),
     ...(filters.q
-      ? { OR: [{ code: { contains: filters.q } }, { reference: { contains: filters.q } }] }
+      ? {
+          OR: [
+            { code: { contains: filters.q } },
+            { reference: { contains: filters.q } },
+            { ilogNumber: { contains: filters.q } },
+          ],
+        }
       : {}),
     ...(filters.createdFrom || filters.createdTo
       ? {
@@ -283,6 +320,34 @@ export class PrismaProcessRepository implements ProcessRepository {
     return rows.map(mapListItem);
   }
 
+  async findByIlogProcessId(ilogProcessId: number): Promise<Process | null> {
+    const row = await this.prisma.process.findFirst({
+      where: { ilogProcessId, deletedAt: null },
+    });
+    return row ? toDomainProcess(row) : null;
+  }
+
+  async findListItemsByIds(ids: string[]): Promise<ProcessListItem[]> {
+    if (ids.length === 0) return [];
+    const rows = await this.prisma.process.findMany({
+      where: { id: { in: ids }, deletedAt: null },
+      include: LIST_ITEM_INCLUDE,
+      orderBy: [{ createdAt: 'desc' }],
+    });
+    return rows.map(mapListItem);
+  }
+
+  async linkIlog(id: string, link: IlogLink): Promise<void> {
+    await this.prisma.process.update({
+      where: { id },
+      data: {
+        ilogProcessId: link.ilogProcessId,
+        ilogNumber: link.ilogNumber,
+        ilogSyncedAt: link.syncedAt,
+      },
+    });
+  }
+
   async board(
     filters: ProcessFilters,
     scope: AccessScope,
@@ -357,6 +422,9 @@ export class PrismaProcessRepository implements ProcessRepository {
               requesterName: input.requesterName,
               requesterEmail: input.requesterEmail,
               receivedAt: input.receivedAt,
+              ilogProcessId: input.ilog?.ilogProcessId ?? null,
+              ilogNumber: input.ilog?.ilogNumber ?? null,
+              ilogSyncedAt: input.ilog?.syncedAt ?? null,
             },
           });
 

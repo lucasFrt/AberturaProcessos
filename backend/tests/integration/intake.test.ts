@@ -514,7 +514,9 @@ describe('Intake por e-mail — integração (docs/13)', () => {
     });
 
     it('referência inexistente responde 404 PROCESS_REF_NOT_FOUND com candidatos parciais', async () => {
-      await seedProcess('IMP-2026-0042 / MSKU1234567');
+      // "MSKU12345678" contém o texto procurado mas não é o mesmo identificador (docs/15):
+      // candidato parcial, não resolução.
+      await seedProcess('IMP-2026-0042 / MSKU12345678');
 
       const response = await request(app)
         .post(`${INTAKE_BASE}/attachments`)
@@ -584,6 +586,107 @@ describe('Intake por e-mail — integração (docs/13)', () => {
         .set('X-Api-Key', apiKey)
         .query({ externalId: 'nunca-visto' });
       expect((none.body as { data: unknown[] }).data).toHaveLength(0);
+    });
+
+    it('identificadores do e-mail vão para o índice: lookup e anexo casam por HBL/contêiner, e o detalhe os expõe (docs/15)', async () => {
+      await prisma.company.create({
+        data: {
+          cnpj: VALID_CNPJ,
+          legalName: 'Cliente Teste LTDA',
+          organizationId: 'org-client-test',
+        },
+      });
+      const created = await request(app)
+        .post(`${INTAKE_BASE}/processes`)
+        .set('X-Api-Key', apiKey)
+        .send({
+          ...basePayload('msg-030'),
+          reference: 'Novo processo 230/26',
+          identifiers: ['DANGB26080406', 'MSKU 1234567'],
+        });
+      expect(created.status).toBe(201);
+      const process = (created.body as IntakeResultBody).process;
+
+      const byHbl = await request(app)
+        .get(`${INTAKE_BASE}/processes/lookup`)
+        .set('X-Api-Key', apiKey)
+        .query({ ref: 'dangb-26080406' });
+      const matches = (
+        byHbl.body as { matches: Array<{ matchedBy: string; process: { id: string } }> }
+      ).matches;
+      expect(matches.map((m) => [m.process.id, m.matchedBy])).toEqual([[process.id, 'OTHER']]);
+
+      const byNumber = await request(app)
+        .get(`${INTAKE_BASE}/processes/lookup`)
+        .set('X-Api-Key', apiKey)
+        .query({ ref: '230/26' });
+      expect(
+        (byNumber.body as { matches: Array<{ matchedBy: string }> }).matches[0]?.matchedBy,
+      ).toBe('OPUS_NUMBER');
+
+      // Anexo por contêiner (só no índice, não na referência).
+      const attached = await request(app)
+        .post(`${INTAKE_BASE}/attachments`)
+        .set('X-Api-Key', apiKey)
+        .field(
+          'payload',
+          JSON.stringify({
+            source: {
+              channel: 'EMAIL',
+              externalId: 'msg-031',
+              subject: 'BL',
+              receivedAt: '2026-09-18T11:00:00.000Z',
+            },
+            requester: { email: 'agente@forwarder-teste.com', name: 'Agente' },
+            processRef: 'MSKU1234567',
+          }),
+        )
+        .attach('files', Buffer.from('%PDF-1.4 bl'), 'bl.pdf');
+      expect(attached.status).toBe(201);
+      expect((attached.body as IntakeResultBody).process.id).toBe(process.id);
+
+      // Mesmo identificador, mesma empresa: outro "novo processo" complementa em vez de duplicar.
+      const again = await request(app)
+        .post(`${INTAKE_BASE}/processes`)
+        .set('X-Api-Key', apiKey)
+        .send({ ...basePayload('msg-032'), reference: 'BL DANGB26080406' });
+      expect(again.status).toBe(201);
+      const againBody = again.body as IntakeResultBody;
+      expect(againBody.process.id).toBe(process.id);
+      expect(againBody.event.kind).toBe('ATTACHMENT');
+      expect(againBody.warnings.some((w) => w.includes('Já existia o processo'))).toBe(true);
+
+      const detail = await request(app)
+        .get(`${PROCESSES_BASE}/${process.id}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(detail.status).toBe(200);
+      const body = detail.body as {
+        ilogProcessId: number | null;
+        ilogNumber: string | null;
+        ilogSyncedAt: string | null;
+        identifiers: Array<{ kind: string; value: string; source: string }>;
+      };
+      expect(body).toMatchObject({ ilogProcessId: null, ilogNumber: null, ilogSyncedAt: null });
+      expect(body.identifiers.map((i) => [i.kind, i.value, i.source])).toEqual([
+        ['OTHER', 'Novo processo 230/26', 'EMAIL'],
+        ['OPUS_NUMBER', '230/26', 'EMAIL'],
+        ['OTHER', 'DANGB26080406', 'EMAIL'],
+        ['CONTAINER', 'MSKU 1234567', 'EMAIL'],
+        // O segundo e-mail (complemento) acrescentou a referência dele ao índice.
+        ['OTHER', 'BL DANGB26080406', 'EMAIL'],
+      ]);
+
+      // Filtro por vínculo com o iLog na listagem.
+      const unlinked = await request(app)
+        .get(PROCESSES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .query({ ilogLinked: 'false' });
+      expect((unlinked.body as { meta: { total: number } }).meta.total).toBe(1);
+      const linked = await request(app)
+        .get(PROCESSES_BASE)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .query({ ilogLinked: 'true' });
+      expect((linked.body as { meta: { total: number } }).meta.total).toBe(0);
     });
 
     it('lookup sem ref nem companyDocument responde 400', async () => {

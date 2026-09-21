@@ -9,6 +9,7 @@ import type {
   UserSummary,
   UserSummaryWithEmail,
 } from '@/domain/entities/process';
+import type { ProcessIdentifier } from '@/domain/entities/process-identifier';
 import type { ProcessPermissions } from '@/domain/entities/process-permissions';
 
 /** Monta o DTO campo a campo — nunca `...process` (docs/06, checklist de segurança). */
@@ -71,6 +72,8 @@ interface ProcessListItemDto {
   requesterName: string | null;
   requesterEmail: string | null;
   receivedAt: string | null;
+  /** Número da Opus no iLog ("31435/26"), quando o processo está vinculado (docs/15). */
+  ilogNumber: string | null;
   stageChangedAt: string;
   completedAt: string | null;
   createdAt: string;
@@ -92,9 +95,28 @@ export function presentProcessListItem(item: ProcessListItem): ProcessListItemDt
     requesterName: item.requesterName,
     requesterEmail: item.requesterEmail,
     receivedAt: item.receivedAt ? item.receivedAt.toISOString() : null,
+    ilogNumber: item.ilogNumber,
     stageChangedAt: item.stageChangedAt.toISOString(),
     completedAt: item.completedAt ? item.completedAt.toISOString() : null,
     createdAt: item.createdAt.toISOString(),
+  };
+}
+
+interface ProcessIdentifierDto {
+  id: string;
+  kind: string;
+  value: string;
+  source: string;
+  createdAt: string;
+}
+
+function presentIdentifier(identifier: ProcessIdentifier): ProcessIdentifierDto {
+  return {
+    id: identifier.id,
+    kind: identifier.kind,
+    value: identifier.value,
+    source: identifier.source,
+    createdAt: identifier.createdAt.toISOString(),
   };
 }
 
@@ -172,12 +194,17 @@ interface ProcessDetailDto {
   requesterName: string | null;
   requesterEmail: string | null;
   receivedAt: string | null;
+  /** Vínculo com o iLog (docs/15): `null` nos três quando não vinculado. */
+  ilogProcessId: number | null;
+  ilogNumber: string | null;
+  ilogSyncedAt: string | null;
   stageChangedAt: string;
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
   documents: ProcessDocumentSummaryDto[];
   history: ProcessHistoryEntryDto[];
+  identifiers: ProcessIdentifierDto[];
   permissions: ProcessPermissionsDto;
 }
 
@@ -201,12 +228,16 @@ export function presentProcessDetail(
     requesterName: detail.requesterName,
     requesterEmail: detail.requesterEmail,
     receivedAt: detail.receivedAt ? detail.receivedAt.toISOString() : null,
+    ilogProcessId: detail.ilogProcessId,
+    ilogNumber: detail.ilogNumber,
+    ilogSyncedAt: detail.ilogSyncedAt ? detail.ilogSyncedAt.toISOString() : null,
     stageChangedAt: detail.stageChangedAt.toISOString(),
     completedAt: detail.completedAt ? detail.completedAt.toISOString() : null,
     createdAt: detail.createdAt.toISOString(),
     updatedAt: detail.updatedAt.toISOString(),
     documents: detail.documents.map(presentDocumentSummary),
     history: detail.history.map(presentHistoryEntry),
+    identifiers: detail.identifiers.map(presentIdentifier),
     permissions: presentPermissions(permissions),
   };
 }

@@ -11,6 +11,8 @@ export interface CompanyRepository {
   findById(id: string): Promise<Company | null>;
   /** `cnpj` já deve chegar normalizado (somente dígitos). */
   findByCnpj(cnpj: string): Promise<Company | null>;
+  /** Empresa vinculada a este `cod_emp` do iLog (docs/15). */
+  findByIlogCompanyId(ilogCompanyId: number): Promise<Company | null>;
   list(filters: CompanyFilters, pagination: PaginationParams): Promise<Page<Company>>;
   create(data: CreateCompanyData): Promise<Company>;
   update(id: string, data: UpdateCompanyData): Promise<Company>;

@@ -42,7 +42,7 @@ export type CompanyDocumentType = (typeof COMPANY_DOCUMENT_TYPES)[number];
  * autenticação e da rota, nunca informada pelo cliente: JWT → WEB, chave de
  * API em rota comum → API, rota de intake → EMAIL.
  */
-export const RECORD_SOURCES = ['WEB', 'EMAIL', 'API'] as const;
+export const RECORD_SOURCES = ['WEB', 'EMAIL', 'API', 'ILOG'] as const;
 export type RecordSource = (typeof RECORD_SOURCES)[number];
 
 /** Canal de origem de um `IntakeEvent` (docs/13, decisão 4). Só e-mail no v1. */
@@ -61,3 +61,31 @@ export type IntakeEventKind = (typeof INTAKE_EVENT_KINDS)[number];
 /** PROCESSING é o "claim" do evento; FAILED permite retomar (docs/13, decisão 4). */
 export const INTAKE_EVENT_STATUSES = ['PROCESSING', 'COMPLETED', 'FAILED'] as const;
 export type IntakeEventStatus = (typeof INTAKE_EVENT_STATUSES)[number];
+
+/**
+ * Tipo de identificador do embarque no índice `ProcessIdentifier` (docs/15,
+ * seção 5.1). O `kind` separa "31435/26" (número da Opus) de um HBL com os
+ * mesmos dígitos; a busca do intake é por `normalized` e devolve o `kind`
+ * casado.
+ */
+export const PROCESS_IDENTIFIER_KINDS = [
+  'OPUS_NUMBER',
+  'CLIENT_REF',
+  'HBL',
+  'MBL',
+  'CONTAINER',
+  'INVOICE',
+  'DI',
+  'CE',
+  'DTA',
+  'OTHER',
+] as const;
+export type ProcessIdentifierKind = (typeof PROCESS_IDENTIFIER_KINDS)[number];
+
+/** Quem gravou o identificador: espelho do iLog, intake por e-mail ou pessoa (formulário/edição). */
+export const PROCESS_IDENTIFIER_SOURCES = ['ILOG', 'EMAIL', 'MANUAL'] as const;
+export type ProcessIdentifierSource = (typeof PROCESS_IDENTIFIER_SOURCES)[number];
+
+/** Chave da linha única de `IlogSyncState` (docs/15, seção 5.2). */
+export const ILOG_SYNC_KEYS = ['ILOG'] as const;
+export type IlogSyncKey = (typeof ILOG_SYNC_KEYS)[number];

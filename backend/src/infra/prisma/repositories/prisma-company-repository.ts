@@ -17,6 +17,7 @@ interface CompanyRecord {
   legalName: string;
   tradeName: string | null;
   organizationId: string;
+  ilogCompanyId: number | null;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -33,6 +34,7 @@ function toDomain(record: CompanyRecord): Company {
     legalName: record.legalName,
     tradeName: record.tradeName,
     organizationId: record.organizationId,
+    ilogCompanyId: record.ilogCompanyId,
     isActive: record.isActive,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
@@ -59,6 +61,12 @@ export class PrismaCompanyRepository implements CompanyRepository {
   async findByCnpj(cnpj: string): Promise<Company | null> {
     // `findFirst`: a unicidade é de um índice filtrado que o Prisma não conhece (docs/04).
     const row = await this.prisma.company.findFirst({ where: { cnpj } });
+    return row ? toDomain(row) : null;
+  }
+
+  async findByIlogCompanyId(ilogCompanyId: number): Promise<Company | null> {
+    // Mesmo caso do `cnpj`: unicidade por índice filtrado (migration 20260922100100).
+    const row = await this.prisma.company.findFirst({ where: { ilogCompanyId } });
     return row ? toDomain(row) : null;
   }
 
@@ -95,7 +103,16 @@ export class PrismaCompanyRepository implements CompanyRepository {
   }
 
   async create(data: CreateCompanyData): Promise<Company> {
-    const row = await this.prisma.company.create({ data });
+    const row = await this.prisma.company.create({
+      data: {
+        cnpj: data.cnpj,
+        documentType: data.documentType,
+        legalName: data.legalName,
+        tradeName: data.tradeName,
+        organizationId: data.organizationId,
+        ilogCompanyId: data.ilogCompanyId ?? null,
+      },
+    });
     return toDomain(row);
   }
 
@@ -106,6 +123,7 @@ export class PrismaCompanyRepository implements CompanyRepository {
       ...(data.legalName !== undefined ? { legalName: data.legalName } : {}),
       ...(data.tradeName !== undefined ? { tradeName: data.tradeName } : {}),
       ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+      ...(data.ilogCompanyId !== undefined ? { ilogCompanyId: data.ilogCompanyId } : {}),
       ...(data.organizationId !== undefined
         ? { organization: { connect: { id: data.organizationId } } }
         : {}),

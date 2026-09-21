@@ -105,6 +105,11 @@ ambíguo, `409 PROCESS_REF_AMBIGUOUS` com os candidatos → nenhum, `404 PROCESS
 até 5 candidatos por busca parcial. O agente pode então decidir (ou perguntar ao operacional) e
 chamar de novo com `processId` explícito, que pula a resolução.
 
+Desde a Tarefa 30 (docs/15) há um degrau a mais entre a referência exata e a busca parcial: o
+**índice de identificadores** (`ProcessIdentifier`) — exato pelo valor normalizado (`31435/26` =
+`31435-26`), devolvendo o `kind` casado (`HBL`, `OPUS_NUMBER`, `CONTAINER`...) — e, se ele não
+tem o identificador, **uma** consulta ao iLog que espelha o processo na hora. Ver decisão 13.
+
 ### 7. Origem, solicitante e data de recebimento passam a fazer parte do domínio
 
 `Process` ganha `source` (`WEB` | `EMAIL` | `API`), `requesterName`, `requesterEmail` e
@@ -213,6 +218,9 @@ automaticamente, venham de quem vierem. Daí três regras:
    identificadores que o e-mail trouxe e ainda não constam na `reference` são acrescentados a ela
    (com `PROCESS_UPDATED` no histórico). O HBL que aparece pela primeira vez no pré-alerta do agente
    é o que fará o "original HBL" do armador, dias depois, encontrar o mesmo processo.
+   Desde a Tarefa 30 (docs/15) o `contains` na `reference` é só o último recurso: cada
+   identificador (da `reference`, de `identifiers` na criação e de `addReferences`) vai para o
+   índice `ProcessIdentifier`, e o `lookup` casa **exato** por valor normalizado, com o `kind`.
 3. **Um processo = um embarque = um BL, e processo só nasce a pedido do cliente.** Quem abre
    processo é o cliente (importador/exportador), pedindo abertura ou mandando "os documentos do
    processo X" de um embarque novo. Documento de terceiro só entra em processo que **já existe**
@@ -257,6 +265,42 @@ coisas:
 
 A rotina, com isso, **não usa conector nenhum**: só a API. O relatório continua existindo como
 resposta final da execução (visível em claude.ai/code/routines), para auditoria da própria rotina.
+
+### 13. O iLog é a fonte da verdade: espelho incremental + índice de identificadores
+
+Estudo completo e desenho no **docs/15**. O resumo do que muda para o intake:
+
+1. **Os processos "de verdade" nascem no iLog** (sistema de comex), pela equipe, horas depois do
+   e-mail do cliente. O backend os **espelha** aqui a cada 5 minutos (`IlogSyncService`, job no
+   processo da API, `ILOG_SYNC_ENABLED`): processo com `source = ILOG`, `ilogProcessId`/`ilogNumber`
+   ("31435/26"), importador com CNPJ real, e todos os identificadores que o iLog conhece
+   (número da Opus, referência do cliente, HBL, MBL, DI, CE, DTA, contêineres, faturas) no índice.
+   O processo que o e-mail do cliente já tinha aberto **é vinculado** ao do iLog quando ele
+   nasce (mesmo identificador, mesma empresa ou empresa pendente), nunca duplicado; o cadastro
+   pendente é concluído com os dados do iLog. A regra "processo só nasce a pedido do cliente"
+   (decisão 11) continua: o e-mail "Novo Processo" abre na hora, o sync vincula depois.
+2. **O intake consulta o índice antes de qualquer `contains`**: `lookup` e `attach` resolvem por
+   identificador exato (normalizado), e a resposta diz **qual** identificador casou (`matchedBy` =
+   `HBL`, `OPUS_NUMBER`, `CONTAINER`...). Se o índice não tem e o iLog está ligado, o backend
+   pergunta ao iLog **uma vez** e espelha o que achar — o agente não precisa de ferramenta nova
+   nem de decidir quando consultar. Nome de empresa não vai ao iLog (só o que tem cara de
+   identificador).
+3. **"Documento sem processo" vira exceção real**: o HBL do pré-alerta do agente que antes era
+   `IGNORED sem processo` agora acha o processo do iLog (88% dos processos têm HBL lá). O que
+   continuar sem processo é porque a equipe ainda não abriu no iLog — e aí a regra 3 da decisão 11
+   vale como antes.
+4. **Empresas e domínios vêm do iLog**: importador por `ilogCompanyId` → CNPJ → cadastro pendente
+   compatível (empresa do processo, mesmo nome ou domínio de contato já conhecido) → criação com
+   razão social e CNPJ reais. Os domínios de contato **exclusivos** de uma empresa no iLog viram
+   `EmailDomain` (`autoApprove = false`, como no intake); domínios compartilhados (webmail,
+   despachantes, agentes) não. Isso elimina o "cadastro pendente" para clientes recorrentes.
+5. **O agente informa `identifiers`** na criação (HBL, contêineres, número do agente, fatura),
+   além da `reference`, para o índice já nascer completo; e um "novo processo" cujo identificador
+   já existe na mesma empresa é tratado pelo servidor como complemento (`event.kind =
+   ATTACHMENT`), não como duplicata.
+
+Nada escreve no iLog (usuário do banco somente leitura, sessão `READ ONLY`); arquivos do
+`ifilesystem` no processo e mapeamento de etapas ficam para a fase seguinte (docs/15, Tarefa 30c).
 
 ## Fluxo de uma execução do agente
 
@@ -395,6 +439,7 @@ O estudo de viabilidade que fundamenta essa divisão (restrições da plataforma
   API só oferece `lookup` para ele conferir antes de decidir — e `skip` para registrar a decisão.
 - Filtrar ruído antes da IA. É a lista de remetentes bloqueados do prompt (decisão 9); o backend
   não a conhece.
+- Escrever no iLog (criar processo, anexar arquivo) — docs/15, seção 5.4.
 - Fila assíncrona para o intake. O agente espera a resposta síncrona (segundos) e precisa dela para
   relatar; se um dia o volume exigir, `POST /intake/processes` pode passar a enfileirar e responder
   `202` com o `IntakeEvent` para consulta — o modelo de evento já comporta isso.

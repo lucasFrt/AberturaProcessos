@@ -3,9 +3,12 @@ import {
   AUTH_PROVIDERS,
   COMPANY_DOCUMENT_TYPES,
   HISTORY_ACTIONS,
+  ILOG_SYNC_KEYS,
   INTAKE_CHANNELS,
   INTAKE_EVENT_KINDS,
   INTAKE_EVENT_STATUSES,
+  PROCESS_IDENTIFIER_KINDS,
+  PROCESS_IDENTIFIER_SOURCES,
   RECORD_SOURCES,
   ROLES,
   USER_STATUSES,
@@ -130,6 +133,21 @@ describe('Consistência entre domain/enums e as CHECK constraints do banco (inte
   it('CK_intake_events_kind aceita exatamente os valores de INTAKE_EVENT_KINDS', async () => {
     const allowed = await allowedValuesForConstraint('CK_intake_events_kind');
     expectSameSet(allowed, INTAKE_EVENT_KINDS, 'CK_intake_events_kind');
+  });
+
+  it('CK_process_identifiers_kind aceita exatamente os valores de PROCESS_IDENTIFIER_KINDS (docs/15)', async () => {
+    const allowed = await allowedValuesForConstraint('CK_process_identifiers_kind');
+    expectSameSet(allowed, PROCESS_IDENTIFIER_KINDS, 'CK_process_identifiers_kind');
+  });
+
+  it('CK_process_identifiers_source aceita exatamente os valores de PROCESS_IDENTIFIER_SOURCES', async () => {
+    const allowed = await allowedValuesForConstraint('CK_process_identifiers_source');
+    expectSameSet(allowed, PROCESS_IDENTIFIER_SOURCES, 'CK_process_identifiers_source');
+  });
+
+  it('CK_ilog_sync_state_key aceita exatamente os valores de ILOG_SYNC_KEYS', async () => {
+    const allowed = await allowedValuesForConstraint('CK_ilog_sync_state_key');
+    expectSameSet(allowed, ILOG_SYNC_KEYS, 'CK_ilog_sync_state_key');
   });
 
   it('CK_intake_events_status aceita exatamente os valores de INTAKE_EVENT_STATUSES', async () => {

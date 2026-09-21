@@ -2,6 +2,7 @@ import { FakeQueueProvider } from '../helpers/fakes/fake-queue-provider';
 import { FakeRealtimeProvider } from '../helpers/fakes/fake-realtime-provider';
 import { InMemoryCompanyRepository } from '../helpers/fakes/in-memory-company-repository';
 import { InMemoryKanbanStageRepository } from '../helpers/fakes/in-memory-kanban-stage-repository';
+import { InMemoryProcessIdentifierRepository } from '../helpers/fakes/in-memory-process-identifier-repository';
 import { InMemoryProcessRepository } from '../helpers/fakes/in-memory-process-repository';
 import { InMemoryUserRepository } from '../helpers/fakes/in-memory-user-repository';
 
@@ -35,6 +36,9 @@ function buildContext(): {
   const realtimeProvider = new FakeRealtimeProvider();
   const service = new ProcessService({
     processRepository,
+    processIdentifierRepository: new InMemoryProcessIdentifierRepository(
+      processRepository.identifiers,
+    ),
     companyRepository,
     stageRepository,
     userRepository,
@@ -67,6 +71,7 @@ function pushCompany(
     legalName: `Empresa ${id}`,
     tradeName: null,
     organizationId,
+    ilogCompanyId: null,
     isActive: true,
     createdAt: now,
     updatedAt: now,

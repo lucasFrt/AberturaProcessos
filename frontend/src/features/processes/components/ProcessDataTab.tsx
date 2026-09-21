@@ -1,11 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
-import { App, Button, Descriptions, Flex, Input, Select, Tag, Typography } from 'antd';
+import { App, Button, Descriptions, Flex, Input, Select, Tag, Tooltip, Typography } from 'antd';
 import type { ReactElement } from 'react';
 import { useState } from 'react';
 
 import { listOperationalUsers } from '@/features/admin/api/user-management-api';
 import type { ProcessDetailDto } from '@/features/processes/api/process-api';
-import { RECORD_SOURCE_LABELS } from '@/features/processes/api/process-api';
+import {
+  PROCESS_IDENTIFIER_KIND_LABELS,
+  PROCESS_IDENTIFIER_SOURCE_LABELS,
+  RECORD_SOURCE_LABELS,
+} from '@/features/processes/api/process-api';
 import { MoveStageModal } from '@/features/processes/components/MoveStageModal';
 import { useAssignResponsible } from '@/features/processes/hooks/useAssignResponsible';
 import { useUpdateProcess } from '@/features/processes/hooks/useUpdateProcess';
@@ -151,7 +155,15 @@ export function ProcessDataTab({ process }: ProcessDataTabProps): ReactElement {
           </Descriptions.Item>
         )}
         <Descriptions.Item label="Origem">
-          <Tag color={process.source === 'EMAIL' ? 'geekblue' : 'default'}>
+          <Tag
+            color={
+              process.source === 'EMAIL'
+                ? 'geekblue'
+                : process.source === 'ILOG'
+                  ? 'purple'
+                  : 'default'
+            }
+          >
             {RECORD_SOURCE_LABELS[process.source]}
           </Tag>
           {process.receivedAt && (
@@ -160,6 +172,39 @@ export function ProcessDataTab({ process }: ProcessDataTabProps): ReactElement {
             </Typography.Text>
           )}
         </Descriptions.Item>
+        <Descriptions.Item label="iLog">
+          {process.ilogNumber ? (
+            <>
+              <Tag color="purple">{process.ilogNumber}</Tag>
+              {process.ilogSyncedAt && (
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  lido em {formatDateTime(process.ilogSyncedAt)}
+                </Typography.Text>
+              )}
+            </>
+          ) : (
+            <Typography.Text type="secondary">ainda sem processo no iLog</Typography.Text>
+          )}
+        </Descriptions.Item>
+        {process.identifiers.length > 0 && (
+          <Descriptions.Item label="Identificadores">
+            <Flex gap={4} wrap>
+              {process.identifiers.map((identifier) => (
+                <Tooltip
+                  key={identifier.id}
+                  title={`${PROCESS_IDENTIFIER_KIND_LABELS[identifier.kind]} · origem: ${PROCESS_IDENTIFIER_SOURCE_LABELS[identifier.source]}`}
+                >
+                  <Tag color={identifier.source === 'ILOG' ? 'purple' : 'default'}>
+                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                      {PROCESS_IDENTIFIER_KIND_LABELS[identifier.kind]}{' '}
+                    </Typography.Text>
+                    {identifier.value}
+                  </Tag>
+                </Tooltip>
+              ))}
+            </Flex>
+          </Descriptions.Item>
+        )}
         {(process.requesterName || process.requesterEmail) && (
           <Descriptions.Item label="Solicitante (pessoa)">
             {process.requesterName ?? '—'}

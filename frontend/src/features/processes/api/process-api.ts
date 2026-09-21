@@ -2,15 +2,59 @@ import { api } from '@/shared/api/http-client';
 
 /**
  * Origem de um processo/documento (docs/13, decisão 7): WEB (formulário),
- * EMAIL (agente de e-mail), API (integração por chave de API).
+ * EMAIL (agente de e-mail), API (integração por chave de API), ILOG (espelho
+ * do iLog, docs/15).
  */
-export type RecordSource = 'WEB' | 'EMAIL' | 'API';
+export type RecordSource = 'WEB' | 'EMAIL' | 'API' | 'ILOG';
 
 export const RECORD_SOURCE_LABELS: Record<RecordSource, string> = {
   WEB: 'Formulário',
   EMAIL: 'E-mail',
   API: 'Integração',
+  ILOG: 'iLog',
 };
+
+/** Tipo de identificador do embarque no índice do processo (docs/15). */
+export type ProcessIdentifierKind =
+  | 'OPUS_NUMBER'
+  | 'CLIENT_REF'
+  | 'HBL'
+  | 'MBL'
+  | 'CONTAINER'
+  | 'INVOICE'
+  | 'DI'
+  | 'CE'
+  | 'DTA'
+  | 'OTHER';
+
+export const PROCESS_IDENTIFIER_KIND_LABELS: Record<ProcessIdentifierKind, string> = {
+  OPUS_NUMBER: 'Nº Opus',
+  CLIENT_REF: 'Ref. cliente',
+  HBL: 'HBL',
+  MBL: 'MBL',
+  CONTAINER: 'Contêiner',
+  INVOICE: 'Fatura',
+  DI: 'DI',
+  CE: 'CE',
+  DTA: 'DTA',
+  OTHER: 'Outro',
+};
+
+export type ProcessIdentifierSource = 'ILOG' | 'EMAIL' | 'MANUAL';
+
+export const PROCESS_IDENTIFIER_SOURCE_LABELS: Record<ProcessIdentifierSource, string> = {
+  ILOG: 'iLog',
+  EMAIL: 'e-mail',
+  MANUAL: 'manual',
+};
+
+export interface ProcessIdentifierDto {
+  id: string;
+  kind: ProcessIdentifierKind;
+  value: string;
+  source: ProcessIdentifierSource;
+  createdAt: string;
+}
 
 /** Payloads e chamadas de `/processes` usados pelo formulário de abertura (docs/05, "Processos"). */
 
@@ -89,6 +133,8 @@ export interface ProcessListItemDto {
   requesterName: string | null;
   requesterEmail: string | null;
   receivedAt: string | null;
+  /** Número da Opus no iLog ("31435/26") quando o processo está vinculado (docs/15). */
+  ilogNumber: string | null;
   stageChangedAt: string;
   completedAt: string | null;
   createdAt: string;
@@ -220,12 +266,16 @@ export interface ProcessDetailDto {
   requesterName: string | null;
   requesterEmail: string | null;
   receivedAt: string | null;
+  ilogProcessId: number | null;
+  ilogNumber: string | null;
+  ilogSyncedAt: string | null;
   stageChangedAt: string;
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
   documents: ProcessDocumentDto[];
   history: ProcessHistoryEntryDto[];
+  identifiers: ProcessIdentifierDto[];
   permissions: ProcessPermissionsDto;
 }
 

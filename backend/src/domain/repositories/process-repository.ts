@@ -2,6 +2,7 @@ import type { AccessScope } from '@/domain/entities/access-scope';
 import type {
   AssignResponsibleWithHistoryInput,
   CreateProcessWithHistoryInput,
+  IlogLink,
   MoveStageWithHistoryInput,
   Process,
   ProcessBoardStageResult,
@@ -38,6 +39,15 @@ export interface ProcessRepository {
    * Escopo é sempre ALL: o intake é interno (OPERATIONAL/ADMIN).
    */
   findExactByRef(ref: string): Promise<ProcessListItem[]>;
+  /** Processo ativo vinculado a este `processoid` do iLog (docs/15). Escopo ALL: uso interno do espelho. */
+  findByIlogProcessId(ilogProcessId: number): Promise<Process | null>;
+  /** Itens de listagem por id, sem escopo (uso interno do intake/espelho). Ignora excluídos. */
+  findListItemsByIds(ids: string[]): Promise<ProcessListItem[]>;
+  /**
+   * Grava/atualiza o vínculo com o iLog (docs/15) sem histórico — o espelho
+   * roda a cada 5 minutos e "lido de novo" não é evento para a timeline.
+   */
+  linkIlog(id: string, link: IlogLink): Promise<void>;
   /** Uma entrada por KanbanStage, com `total` real e até `limitPerStage` itens (docs/05). */
   board(
     filters: ProcessFilters,

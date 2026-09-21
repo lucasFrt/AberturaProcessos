@@ -2,6 +2,7 @@ import type { AccessScope } from '@/domain/entities/access-scope';
 import type {
   AssignResponsibleWithHistoryInput,
   CreateProcessWithHistoryInput,
+  IlogLink,
   MoveStageWithHistoryInput,
   Process,
   ProcessBoardStageResult,
@@ -13,6 +14,7 @@ import type {
   SoftDeleteWithHistoryInput,
   UpdateProcessWithHistoryInput,
 } from '@/domain/entities/process';
+import type { ProcessIdentifier } from '@/domain/entities/process-identifier';
 import type { Page, PaginationParams } from '@/domain/pagination';
 import type { ProcessRepository } from '@/domain/repositories/process-repository';
 
@@ -51,6 +53,8 @@ export class InMemoryProcessRepository implements ProcessRepository {
   readonly stages: FakeStage[] = [];
   readonly companies: FakeCompany[] = [];
   readonly users: FakeUser[] = [];
+  /** Preenchido pelo teste (ou pelo fake de identificadores) para aparecer no detalhe. */
+  readonly identifiers: ProcessIdentifier[] = [];
   /** Ano forçado para os testes de geração de código, se necessário. */
   yearOverride: number | undefined;
   /**
@@ -103,6 +107,7 @@ export class InMemoryProcessRepository implements ProcessRepository {
       requesterName: process.requesterName,
       requesterEmail: process.requesterEmail,
       receivedAt: process.receivedAt,
+      ilogNumber: process.ilogNumber,
       stageChangedAt: process.stageChangedAt,
       completedAt: process.completedAt,
       createdAt: process.createdAt,
@@ -132,6 +137,9 @@ export class InMemoryProcessRepository implements ProcessRepository {
       requesterName: process.requesterName,
       requesterEmail: process.requesterEmail,
       receivedAt: process.receivedAt,
+      ilogProcessId: process.ilogProcessId,
+      ilogNumber: process.ilogNumber,
+      ilogSyncedAt: process.ilogSyncedAt,
       stageChangedAt: process.stageChangedAt,
       completedAt: process.completedAt,
       createdAt: process.createdAt,
@@ -140,6 +148,7 @@ export class InMemoryProcessRepository implements ProcessRepository {
       history: this.history
         .filter((entry) => entry.processId === process.id)
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()),
+      identifiers: this.identifiers.filter((entry) => entry.processId === process.id),
     };
   }
 
@@ -166,6 +175,31 @@ export class InMemoryProcessRepository implements ProcessRepository {
       .map((item) => this.toListItem(item));
   }
 
+  async findByIlogProcessId(ilogProcessId: number): Promise<Process | null> {
+    return (
+      this.items.find((item) => item.ilogProcessId === ilogProcessId && item.deletedAt === null) ??
+      null
+    );
+  }
+
+  async findListItemsByIds(ids: string[]): Promise<ProcessListItem[]> {
+    return this.items
+      .filter((item) => ids.includes(item.id) && item.deletedAt === null)
+      .map((item) => this.toListItem(item));
+  }
+
+  async linkIlog(id: string, link: IlogLink): Promise<void> {
+    const index = this.items.findIndex((item) => item.id === id);
+    const current = this.items[index];
+    if (!current) throw new Error(`Process ${id} não encontrado no fake.`);
+    this.items[index] = {
+      ...current,
+      ilogProcessId: link.ilogProcessId,
+      ilogNumber: link.ilogNumber,
+      ilogSyncedAt: link.syncedAt,
+    };
+  }
+
   async list(
     filters: ProcessFilters,
     scope: AccessScope,
@@ -177,6 +211,8 @@ export class InMemoryProcessRepository implements ProcessRepository {
     );
 
     if (filters.stageId) filtered = filtered.filter((p) => p.currentStageId === filters.stageId);
+    if (filters.ilogLinked !== undefined)
+      filtered = filtered.filter((p) => (p.ilogProcessId !== null) === filters.ilogLinked);
     if (filters.clientCompanyId)
       filtered = filtered.filter((p) => p.clientCompanyId === filters.clientCompanyId);
     if (filters.responsibleId)
@@ -239,6 +275,9 @@ export class InMemoryProcessRepository implements ProcessRepository {
       requesterName: input.requesterName,
       requesterEmail: input.requesterEmail,
       receivedAt: input.receivedAt,
+      ilogProcessId: input.ilog?.ilogProcessId ?? null,
+      ilogNumber: input.ilog?.ilogNumber ?? null,
+      ilogSyncedAt: input.ilog?.syncedAt ?? null,
       clientCompanyId: input.clientCompanyId,
       requestingCompanyId: input.requestingCompanyId,
       currentStageId: input.currentStageId,

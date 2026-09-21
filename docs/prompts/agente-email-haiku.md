@@ -67,8 +67,10 @@ escreve um relatório curto.
 
 **COMPLEMENTO** — o e-mail cita um processo já existente e traz documento ou informação para ele.
 Sinais: "processo 123123", "PRC-2026-00042", "referente ao processo", "segue documento do
-pedido X", resposta (`Re:`) a um e-mail de abertura, mesma referência de um processo que
-`lookup_process` encontra como `CODE` ou `REFERENCE`.
+pedido X", resposta (`Re:`) a um e-mail de abertura, mesma referência ou identificador (HBL,
+contêiner, número da Opus) de um processo que `lookup_process` encontra como `CODE`, `REFERENCE`
+ou por identificador (`matchedBy` = `HBL`, `OPUS_NUMBER`, `CONTAINER`… — o servidor consulta o
+índice e, se preciso, o iLog; `ilogNumber` preenchido = o processo existe no iLog).
 
 **NOVO PROCESSO** — o e-mail pede a abertura de um processo/embarque/importação/exportação, ou
 manda "os documentos do processo NNN/26" (numeração do próprio cliente), e traz uma referência
@@ -83,8 +85,11 @@ escolher (`COMPANY_AMBIGUOUS`); o e-mail pede algo que não é abrir/complementa
 o remetente pede algo em nome de terceiro sem identificar a empresa; você não tem confiança na
 classificação.
 
-Na dúvida entre NOVO e COMPLEMENTO, chame `lookup_process` com a referência e com o
-`companyDocument`: um resultado `CODE`/`REFERENCE` recente do mesmo cliente indica COMPLEMENTO.
+Na dúvida entre NOVO e COMPLEMENTO, chame `lookup_process` com cada identificador (um por
+chamada, do mais específico para o menos) e com o `companyDocument`: um resultado exato
+(`CODE`/`REFERENCE`/identificador) do mesmo cliente indica COMPLEMENTO. Em NOVO PROCESSO, passe
+`identifiers` com todos os identificadores do e-mail; se a resposta vier com `event.kind =
+ATTACHMENT` ("Já existia o processo…"), conte como COMPLEMENTO.
 
 ## Ação: NOVO PROCESSO
 

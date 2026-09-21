@@ -508,6 +508,43 @@ nem avisado; `sanitizeFolderName` remove `\ / : * ? " < > |` e limita a 100; o p
 as pastas em ordem e reaproveita ids na segunda cópia; 403 → `FORBIDDEN`; a tela lista eventos
 com filtros e o front compila sem erro.
 
+### Tarefa 30 — iLog como fonte da verdade: índice de identificadores + espelho incremental (30a/30b)
+
+Estudo e desenho no doc 15. (a) `ProcessIdentifier` (kind, value, normalized, source) alimentado
+pela `reference` de toda criação/edição, por `identifiers`/`addReferences` do intake e pelo
+espelho; `lookup`/`attach` do intake consultam o índice (exato por normalizado, `matchedBy` = kind)
+antes dos parciais; um "novo processo" com identificador já existente na mesma empresa vira
+complemento (um processo por BL, decisão 11). (b) `IlogProcessSource` no domínio +
+`MysqlIlogProcessSource` (`infra/ilog/`, mysql2, pool de 2, sessão `READ ONLY`, só colunas
+indexadas, `LIMIT` sempre); `IlogSyncService` com backfill (abertos há até `ILOG_BACKFILL_DAYS`) e
+incremental pelo `changelog` (processo + faturas + contêineres, sobreposição de 2 min, cursor só
+avança até onde tudo foi lido); `Process.ilog*`, `Company.ilogCompanyId`, `IlogSyncState`;
+`RECORD_SOURCES` += `ILOG`. (c) Empresas: importador por `ilogCompanyId` → CNPJ → cadastro pendente
+(da empresa do processo, mesmo nome ou domínio de contato conhecido) → criar organização + empresa
++ `EmailDomain` dos domínios de contato exclusivos (`autoApprove=false`); vínculo do processo aberto
+por e-mail (mesmo identificador e mesma empresa ou empresa pendente) em vez de duplicar.
+(d) Retaguarda B implícita: `lookup`/`attach` sem resultado no índice consultam o iLog uma vez
+(`importByIdentifier`) e espelham na hora. (e) `IlogSyncJob` (`setInterval`, processo da API, para
+o tempo real) e `ILOG_*` no env. (f) Front: tag "iLog 31435/26" no card, origem "iLog", bloco
+iLog e identificadores na gaveta. (g) MCP: `identifiers` em `create_process_from_email`,
+descrições de `lookup_process`/`attach_to_process`; prompt v9.
+
+**Refs:** doc 15 (todo), doc 13 (decisões 10 e 11), doc 04 ("Limitações", `ProcessIdentifier`),
+doc 05 (`GET /processes`, `GET /processes/:id`, `/intake/*`), doc 10 (`ILOG_*`).
+
+**Aceite:** unit (fakes): normalização/classificação/extração de identificadores; backfill cria
+processos `ILOG` com empresa/organização/domínios e índice; incremental relê só o alterado, sem
+duplicar, avançando o cursor; vincula processo criado por e-mail com empresa pendente e conclui o
+cadastro; não vincula em empresa diferente; conclui pendente por nome/domínio; ignora sem
+importador; erro → `lastError`; sem ciclos sobrepostos; ator por e-mail ou primeiro ADMIN;
+`importByIdentifier` espelha e não duplica; provider MySQL com pool falso (sessão read-only,
+cursor sob truncamento, datas no fuso do iLog, CNPJ em dígitos, domínios de contato); intake casa
+por índice e só consulta o iLog na falta; criação deduplica na mesma empresa. Integração: CHECK
+constraints novas; `identifiers` no intake → lookup por HBL/contêiner, anexo por contêiner,
+complemento em vez de duplicar, detalhe com `identifiers`/`ilog*`, filtro `ilogLinked`. Lint,
+typecheck, build e suíte completa verdes; MCP compila e sobe. Fase seguinte (30c): arquivos do
+`ifilesystem` no processo e mapeamento de etapas.
+
 
 ## Ordem e paralelismo
 

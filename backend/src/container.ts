@@ -16,16 +16,19 @@ import type { AuthenticateDeps } from '@/http/middlewares/authenticate';
 import type { UploadMiddlewareConfig } from '@/http/middlewares/upload';
 import { ReceitaWsCnpjLookupProvider } from '@/infra/cnpj/receitaws-cnpj-lookup-provider';
 import { GraphMailAttachmentProvider } from '@/infra/graph/graph-mail-attachment-provider';
+import { MysqlIlogProcessSource } from '@/infra/ilog/mysql-ilog-process-source';
 import { logger } from '@/infra/logger';
 import { PrismaApiKeyRepository } from '@/infra/prisma/repositories/prisma-api-key-repository';
 import { PrismaCompanyRepository } from '@/infra/prisma/repositories/prisma-company-repository';
 import { PrismaDashboardRepository } from '@/infra/prisma/repositories/prisma-dashboard-repository';
 import { PrismaDocumentRepository } from '@/infra/prisma/repositories/prisma-document-repository';
 import { PrismaEmailDomainRepository } from '@/infra/prisma/repositories/prisma-email-domain-repository';
+import { PrismaIlogSyncStateRepository } from '@/infra/prisma/repositories/prisma-ilog-sync-state-repository';
 import { PrismaIntakeCursorRepository } from '@/infra/prisma/repositories/prisma-intake-cursor-repository';
 import { PrismaIntakeEventRepository } from '@/infra/prisma/repositories/prisma-intake-event-repository';
 import { PrismaKanbanStageRepository } from '@/infra/prisma/repositories/prisma-kanban-stage-repository';
 import { PrismaOrganizationRepository } from '@/infra/prisma/repositories/prisma-organization-repository';
+import { PrismaProcessIdentifierRepository } from '@/infra/prisma/repositories/prisma-process-identifier-repository';
 import { PrismaProcessRepository } from '@/infra/prisma/repositories/prisma-process-repository';
 import { PrismaRefreshTokenRepository } from '@/infra/prisma/repositories/prisma-refresh-token-repository';
 import { PrismaUserIdentityRepository } from '@/infra/prisma/repositories/prisma-user-identity-repository';
@@ -45,6 +48,7 @@ import { CompanyService } from '@/services/company-service';
 import { DashboardService } from '@/services/dashboard-service';
 import { DocumentService } from '@/services/document-service';
 import { DomainProvisioningService } from '@/services/domain-provisioning-service';
+import { IlogSyncService } from '@/services/ilog-sync-service';
 import { IntakeService } from '@/services/intake-service';
 import { KanbanStageService } from '@/services/kanban-stage-service';
 import { OrganizationService } from '@/services/organization-service';
@@ -86,6 +90,14 @@ export interface Container {
   uploadMiddlewareConfig: UploadMiddlewareConfig;
   dashboardController: DashboardController;
   intakeController: IntakeController;
+  /**
+   * Espelho do iLog (docs/15). `null` = `ILOG_SYNC_ENABLED=false`. Quem agenda
+   * é `http/server.ts` (`jobs/ilog-sync-job.ts`), no processo da API — o
+   * worker não tem Socket.IO para emitir `process:created` do que espelhar.
+   */
+  ilogSyncService: IlogSyncService | null;
+  /** Fecha conexões abertas por providers que não são do Prisma/Redis (hoje, o pool do iLog). */
+  shutdown: () => Promise<void>;
 }
 
 export function buildContainer(prisma: PrismaClient): Container {
@@ -102,6 +114,8 @@ export function buildContainer(prisma: PrismaClient): Container {
   const apiKeyRepository = new PrismaApiKeyRepository(prisma);
   const intakeEventRepository = new PrismaIntakeEventRepository(prisma);
   const intakeCursorRepository = new PrismaIntakeCursorRepository(prisma);
+  const processIdentifierRepository = new PrismaProcessIdentifierRepository(prisma);
+  const ilogSyncStateRepository = new PrismaIlogSyncStateRepository(prisma);
 
   const passwordHasher = new BcryptPasswordHasher();
   const tokenService = new JwtTokenService();
@@ -209,6 +223,7 @@ export function buildContainer(prisma: PrismaClient): Container {
 
   const processService = new ProcessService({
     processRepository,
+    processIdentifierRepository,
     companyRepository,
     stageRepository: kanbanStageRepository,
     userRepository,
@@ -248,6 +263,40 @@ export function buildContainer(prisma: PrismaClient): Container {
         )
       : null;
 
+  // Espelho do iLog (docs/15, Tarefa 30): só com ILOG_SYNC_ENABLED=true e
+  // credenciais; `null` deixa o intake apenas com o índice local.
+  const ilogProcessSource =
+    env.ILOG_SYNC_ENABLED && env.ILOG_MYSQL_HOST && env.ILOG_MYSQL_USER && env.ILOG_MYSQL_PASSWORD
+      ? new MysqlIlogProcessSource({
+          host: env.ILOG_MYSQL_HOST,
+          port: env.ILOG_MYSQL_PORT,
+          user: env.ILOG_MYSQL_USER,
+          password: env.ILOG_MYSQL_PASSWORD,
+          database: env.ILOG_MYSQL_DATABASE,
+          queryTimeoutSeconds: env.ILOG_MYSQL_TIMEOUT_MS / 1000,
+          connectTimeoutMs: env.ILOG_MYSQL_TIMEOUT_MS,
+        })
+      : null;
+  const ilogSyncService = ilogProcessSource
+    ? new IlogSyncService({
+        source: ilogProcessSource,
+        syncStateRepository: ilogSyncStateRepository,
+        processRepository,
+        processIdentifierRepository,
+        companyRepository,
+        organizationRepository,
+        emailDomainRepository,
+        userRepository,
+        processService,
+        logger,
+        options: {
+          backfillDays: env.ILOG_BACKFILL_DAYS,
+          changelogLimit: env.ILOG_CHANGELOG_LIMIT,
+          actorEmail: env.ILOG_SYNC_ACTOR_EMAIL ?? null,
+        },
+      })
+    : null;
+
   const intakeService = new IntakeService({
     intakeEventRepository,
     intakeCursorRepository,
@@ -256,11 +305,13 @@ export function buildContainer(prisma: PrismaClient): Container {
     mailboxOrganizer: env.GRAPH_ORGANIZE_ENABLED ? mailAttachmentProvider : null,
     organizeFolder: env.GRAPH_ORGANIZE_FOLDER,
     processRepository,
+    processIdentifierRepository,
     companyRepository,
     organizationRepository,
     emailDomainRepository,
     processService,
     documentService,
+    ilogSyncService,
     cnpjLookupProvider,
     mailAttachmentProvider,
     maxAttachmentBytes: env.MAX_UPLOAD_SIZE_MB * 1024 * 1024,
@@ -287,5 +338,9 @@ export function buildContainer(prisma: PrismaClient): Container {
     },
     dashboardController: new DashboardController(dashboardService),
     intakeController: new IntakeController(intakeService),
+    ilogSyncService,
+    shutdown: async () => {
+      await ilogProcessSource?.close();
+    },
   };
 }

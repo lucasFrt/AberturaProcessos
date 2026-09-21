@@ -148,6 +148,26 @@ export const envSchema = z.object({
   /** Copiar o e-mail processado para `GRAPH_ORGANIZE_FOLDER/<Organização>` (docs/13, decisão 12). Exige Mail.ReadWrite. */
   GRAPH_ORGANIZE_ENABLED: booleanFromEnv(false),
   GRAPH_ORGANIZE_FOLDER: z.string().trim().min(1).max(100).default('Processos IA'),
+
+  // ── Espelho do iLog (docs/15, Tarefa 30) ─
+  // Leitura do MySQL do iLog (sistema de comex) para espelhar processos e
+  // alimentar o índice de identificadores. Usuário SOMENTE LEITURA. Desligado,
+  // nada consulta o iLog: o intake fica só com o índice local.
+  ILOG_SYNC_ENABLED: booleanFromEnv(false),
+  ILOG_MYSQL_HOST: z.string().optional(),
+  ILOG_MYSQL_PORT: z.coerce.number().int().positive().default(3306),
+  ILOG_MYSQL_USER: z.string().optional(),
+  ILOG_MYSQL_PASSWORD: z.string().optional(),
+  ILOG_MYSQL_DATABASE: z.string().default('ilog'),
+  ILOG_MYSQL_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+  /** Intervalo do job de espelhamento (roda no processo da API, para emitir tempo real). */
+  ILOG_SYNC_INTERVAL_MINUTES: z.coerce.number().int().positive().default(5),
+  /** Backfill inicial: processos em aberto abertos há até N dias. */
+  ILOG_BACKFILL_DAYS: z.coerce.number().int().positive().default(90),
+  /** Máximo de processos alterados lidos por ciclo (proteção após muito tempo parado). */
+  ILOG_CHANGELOG_LIMIT: z.coerce.number().int().positive().default(2_000),
+  /** E-mail do usuário que assina as escritas do espelho; vazio = primeiro ADMIN ativo. */
+  ILOG_SYNC_ACTOR_EMAIL: z.string().email().optional(),
 });
 
 const refinedEnvSchema = envSchema.superRefine((data, ctx) => {
@@ -158,6 +178,20 @@ const refinedEnvSchema = envSchema.superRefine((data, ctx) => {
       path: ['COOKIE_SECURE'],
       message: 'COOKIE_SECURE precisa ser true em produção.',
     });
+  }
+
+  // Mesmo raciocínio para o iLog: sem host/usuário/senha o job falharia a
+  // cada ciclo em vez de na subida.
+  if (data.ILOG_SYNC_ENABLED) {
+    for (const key of ['ILOG_MYSQL_HOST', 'ILOG_MYSQL_USER', 'ILOG_MYSQL_PASSWORD'] as const) {
+      if (!data[key]) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [key],
+          message: `${key} é obrigatória quando ILOG_SYNC_ENABLED=true.`,
+        });
+      }
+    }
   }
 
   // Ligar o Graph sem credenciais falharia só na primeira chamada do agente,

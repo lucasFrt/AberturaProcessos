@@ -1,3 +1,4 @@
+import type { ProcessIdentifier } from '@/domain/entities/process-identifier';
 import type { HistoryAction, RecordSource } from '@/domain/enums';
 
 /**
@@ -11,13 +12,17 @@ export interface Process {
   code: string;
   reference: string;
   additionalInfo: string | null;
-  /** Origem (docs/13, decisão 7): WEB (formulário), EMAIL (intake), API (chave de API em rota comum). */
+  /** Origem (docs/13, decisão 7): WEB (formulário), EMAIL (intake), API (chave de API em rota comum), ILOG (espelho, docs/15). */
   source: RecordSource;
   /** Solicitante informado no e-mail — texto livre, não FK em User (docs/13). */
   requesterName: string | null;
   requesterEmail: string | null;
   /** Data de recebimento da solicitação (data do e-mail). `null` = igual a `createdAt`. */
   receivedAt: Date | null;
+  /** Vínculo com o iLog (docs/15): `processoid`, número da Opus ("31435/26") e última leitura. */
+  ilogProcessId: number | null;
+  ilogNumber: string | null;
+  ilogSyncedAt: Date | null;
   clientCompanyId: string;
   requestingCompanyId: string | null;
   currentStageId: string;
@@ -69,6 +74,8 @@ export interface ProcessListItem {
   requesterName: string | null;
   requesterEmail: string | null;
   receivedAt: Date | null;
+  /** Número da Opus no iLog, quando vinculado (docs/15). */
+  ilogNumber: string | null;
   stageChangedAt: Date;
   completedAt: Date | null;
   createdAt: Date;
@@ -111,12 +118,17 @@ export interface ProcessDetail {
   requesterName: string | null;
   requesterEmail: string | null;
   receivedAt: Date | null;
+  ilogProcessId: number | null;
+  ilogNumber: string | null;
+  ilogSyncedAt: Date | null;
   stageChangedAt: Date;
   completedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   documents: ProcessDocumentSummary[];
   history: ProcessHistoryEntry[];
+  /** Índice de identificadores do embarque (docs/15), em ordem de criação. */
+  identifiers: ProcessIdentifier[];
 }
 
 export interface ProcessBoardStageResult {
@@ -147,6 +159,7 @@ export function toProcessListItem(detail: ProcessDetail): ProcessListItem {
     requesterName: detail.requesterName,
     requesterEmail: detail.requesterEmail,
     receivedAt: detail.receivedAt,
+    ilogNumber: detail.ilogNumber,
     stageChangedAt: detail.stageChangedAt,
     completedAt: detail.completedAt,
     createdAt: detail.createdAt,
@@ -164,6 +177,15 @@ export interface CreateProcessWithHistoryInput {
   requesterName: string | null;
   requesterEmail: string | null;
   receivedAt: Date | null;
+  /** Só o espelho do iLog preenche (docs/15); ausente/`null` para os demais. */
+  ilog?: IlogLink | null | undefined;
+}
+
+/** Vínculo de um processo local com o do iLog (docs/15, seção 5.1). */
+export interface IlogLink {
+  ilogProcessId: number;
+  ilogNumber: string;
+  syncedAt: Date;
 }
 
 export interface UpdateProcessData {
@@ -213,6 +235,8 @@ export interface SoftDeleteWithHistoryInput {
 
 export interface ProcessFilters {
   stageId?: string | undefined;
+  /** `true` = só vinculados ao iLog; `false` = só sem vínculo. */
+  ilogLinked?: boolean | undefined;
   clientCompanyId?: string | undefined;
   responsibleId?: string | undefined;
   organizationId?: string | undefined;

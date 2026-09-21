@@ -33,6 +33,10 @@ export class InMemoryCompanyRepository implements CompanyRepository {
     return this.items.find((item) => item.cnpj !== null && item.cnpj === cnpj) ?? null;
   }
 
+  async findByIlogCompanyId(ilogCompanyId: number): Promise<Company | null> {
+    return this.items.find((item) => item.ilogCompanyId === ilogCompanyId) ?? null;
+  }
+
   async list(filters: CompanyFilters, pagination: PaginationParams): Promise<Page<Company>> {
     const filtered = this.items.filter((item) => {
       if (filters.organizationId && item.organizationId !== filters.organizationId) return false;
@@ -66,10 +70,15 @@ export class InMemoryCompanyRepository implements CompanyRepository {
     const now = new Date();
     const company: Company = {
       id: `company-${idCounter}`,
+      cnpj: data.cnpj,
+      documentType: data.documentType,
+      legalName: data.legalName,
+      tradeName: data.tradeName,
+      organizationId: data.organizationId,
+      ilogCompanyId: data.ilogCompanyId ?? null,
       isActive: true,
       createdAt: now,
       updatedAt: now,
-      ...data,
     };
     this.items.push(company);
     return company;
@@ -88,6 +97,7 @@ export class InMemoryCompanyRepository implements CompanyRepository {
       ...(data.legalName !== undefined ? { legalName: data.legalName } : {}),
       ...(data.tradeName !== undefined ? { tradeName: data.tradeName } : {}),
       ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+      ...(data.ilogCompanyId !== undefined ? { ilogCompanyId: data.ilogCompanyId } : {}),
       ...(data.organizationId !== undefined ? { organizationId: data.organizationId } : {}),
       updatedAt: new Date(),
     };

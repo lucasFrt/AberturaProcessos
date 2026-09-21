@@ -8,6 +8,8 @@ export async function truncateAll(prisma: PrismaClient): Promise<void> {
   const tablesInReverseFkOrder = [
     'intake_events',
     'intake_cursors',
+    'ilog_sync_state',
+    'process_identifiers',
     'process_history',
     'documents',
     'processes',

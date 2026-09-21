@@ -46,6 +46,8 @@ export const intakeCreateProcessSchema = z.object({
   requestingCompany: companyRefSchema.nullable().optional(),
   reference: z.string().trim().min(3, 'Referência precisa ter ao menos 3 caracteres.').max(255),
   additionalInfo: z.string().max(10_000).nullable().optional(),
+  /** Identificadores do embarque além da referência (HBL, contêiner...), para o índice (docs/15). */
+  identifiers: z.array(z.string().trim().min(3).max(100)).max(20).nullable().optional(),
   fetchAttachments: z.boolean().default(false),
 });
 export type IntakeCreateProcessBody = z.infer<typeof intakeCreateProcessSchema>;

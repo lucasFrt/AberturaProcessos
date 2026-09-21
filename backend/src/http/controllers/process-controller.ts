@@ -24,6 +24,7 @@ import type { ProcessService } from '@/services/process-service';
 
 function filtersFromQuery(query: {
   stageId?: string | undefined;
+  ilogLinked?: boolean | undefined;
   clientCompanyId?: string | undefined;
   responsibleId?: string | undefined;
   organizationId?: string | undefined;
@@ -33,6 +34,7 @@ function filtersFromQuery(query: {
 }): ProcessFilters {
   return {
     stageId: query.stageId,
+    ilogLinked: query.ilogLinked,
     clientCompanyId: query.clientCompanyId,
     responsibleId: query.responsibleId,
     organizationId: query.organizationId,

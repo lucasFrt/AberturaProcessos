@@ -12,6 +12,8 @@ export interface Company {
   legalName: string;
   tradeName: string | null;
   organizationId: string;
+  /** `empresa.cod_emp` no iLog, quando vinculada pelo espelho (docs/15). */
+  ilogCompanyId: number | null;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -30,6 +32,7 @@ export interface CreateCompanyData {
   legalName: string;
   tradeName: string | null;
   organizationId: string;
+  ilogCompanyId?: number | null | undefined;
 }
 
 export interface UpdateCompanyData {
@@ -40,6 +43,7 @@ export interface UpdateCompanyData {
   tradeName?: string | null | undefined;
   isActive?: boolean | undefined;
   organizationId?: string | undefined;
+  ilogCompanyId?: number | null | undefined;
 }
 
 export interface CompanyFilters {

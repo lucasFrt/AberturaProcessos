@@ -58,9 +58,9 @@ Ao mudar comportamento de contrato (rota, payload, schema), atualize o documento
 - **Camadas**: Routes → Middlewares → Controllers → Services → Repositories (interface no domínio,
   implementação Prisma em `infra/`). Controllers não têm regra de negócio; services não conhecem
   Express nem Prisma diretamente.
-- **Nenhum arquivo em `src/services/` ou `src/domain/` importa `@prisma/client`, `express`, ou
-  qualquer coisa de `infra/prisma`, `infra/queue`, `infra/mail`, `infra/storage`, `infra/realtime`,
-  `infra/cnpj`, `infra/graph`.**
+- **Nenhum arquivo em `src/services/` ou `src/domain/` importa `@prisma/client`, `express`,
+  `mysql2`, ou qualquer coisa de `infra/prisma`, `infra/queue`, `infra/mail`, `infra/storage`,
+  `infra/realtime`, `infra/cnpj`, `infra/graph`, `infra/ilog`.**
   Isso é reforçado por `no-restricted-imports` no `eslint.config.js` do backend — se o lint falhar
   com esse erro, o código está na camada errada, não é para suprimir a regra.
 - **AccessScope obrigatório**: todo método de leitura de repositório que toca em dados
@@ -98,7 +98,9 @@ http/
   middlewares/  authenticate, authorize, validate, upload, rate-limit, error-handler, request-context
 infra/        implementações concretas: prisma/, queue/ (BullMQ), mail/, realtime/ (Socket.IO),
               storage/ (disco local), security/ (bcrypt, JWT, chave de API), cnpj/ (ReceitaWS),
-              graph/ (anexos de e-mail via Microsoft Graph, client credentials)
+              graph/ (anexos de e-mail via Microsoft Graph, client credentials),
+              ilog/ (leitura do MySQL do iLog via mysql2, sessão somente leitura)
+jobs/         agendadores que rodam no processo da API (hoje só o espelho do iLog, setInterval)
 passport/     estratégias OAuth (Google, Microsoft), registradas condicionalmente por credencial
 workers/      processo separado (`npm run dev:worker`), consome fila de e-mail
 container.ts  composição manual de dependências (ver acima)
@@ -142,6 +144,24 @@ container.ts  composição manual de dependências (ver acima)
   vira `IGNORED` com motivo `sem processo para ...` (bloco próprio no relatório), nunca cria.
   `company.senderIsClient=false` (cliente pelo nome citado, pendente sem domínio) existe na API mas
   o prompt não o usa.
+- **O iLog (sistema de comex, MySQL) é a fonte da verdade dos processos** (docs/15; docs/13,
+  decisão 13). `IlogSyncService` (`services/ilog-sync-service.ts`) espelha processos abertos/
+  alterados a cada `ILOG_SYNC_INTERVAL_MINUTES` — `Process.source = ILOG`, `ilogProcessId`/
+  `ilogNumber`, importador com CNPJ real, `EmailDomain` dos domínios de contato exclusivos — e
+  **vincula** (nunca duplica) o processo que o e-mail já abriu. O job (`jobs/ilog-sync-job.ts`)
+  roda no **processo da API**, não no worker, porque precisa do Socket.IO; um único processo da
+  API existe em produção. Nada escreve no iLog: usuário do banco somente leitura + `SET SESSION
+  TRANSACTION READ ONLY` no provider. `ILOG_SYNC_ENABLED=false` (padrão e `.env.test`) = nada
+  consulta o iLog. Credenciais do iLog para exploração local ficam no `.env` da **raiz** (não
+  versionado, nunca commitar).
+- **Índice de identificadores (`ProcessIdentifier`)** é o que casa e-mail com processo: toda
+  `reference` criada/editada, `identifiers`/`addReferences` do intake e o espelho alimentam-no;
+  `lookup`/`attach` consultam **exato por `normalized`** (maiúsculas, só `[A-Z0-9]`) antes do
+  `contains`, e devolvem o `kind` casado em `matchedBy`. Sem resultado no índice e com o iLog
+  ligado, o intake consulta o iLog **uma vez** e espelha na hora (retaguarda B do docs/15) — não
+  há ferramenta/endpoint separado para isso. `ilogProcessId`/`ilogCompanyId` são anuláveis **sem
+  `@unique`** (índice filtrado à mão, mesmo padrão do `cnpj`; o `WHERE` do índice filtrado precisa
+  de migration separada da coluna).
 - **`/intake/*` não passa pelo `uploadLimiter`** (30/10 min é para pessoas); usa o limite
   interno de `rateLimitByRole`.
 - `mcp-server/` é um pacote separado (ESM, `@modelcontextprotocol/sdk`), sem regra de negócio:
@@ -262,10 +282,13 @@ verificar as versões reais) assumiam. Onde isso importou, a decisão já foi to
 
 ## Estado do projeto
 
-As 22 tarefas do núcleo e a Fase 7 (Tarefas 23–28, alimentação por IA — chaves de API,
+As 22 tarefas do núcleo e a Fase 7 (Tarefas 23–30, alimentação por IA — chaves de API,
 origem/solicitante/CPF, intake idempotente por e-mail com anexos via Graph, MCP server + prompts,
 cursor gravado e empresa pelo domínio/cadastro pendente, caixa lida pelo servidor e documentos de
-qualquer parceiro) estão concluídas.
+qualquer parceiro, pasta por organização + tela "Intake IA", e o espelho do iLog com índice de
+identificadores — Tarefa 30a/30b, docs/15) estão concluídas. Falta a 30c (arquivos do
+`ifilesystem` no processo, mapeamento de etapas) e, fora do repositório, o usuário MySQL somente
+leitura + conectividade do Windows Server com o iLog e as variáveis `ILOG_*` no `.env` do servidor.
 A API está publicada em `https://processos.opusce.com.br` (Windows Server, docs/11, scripts em
 `deploy/`), o app do Entra ID tem RBAC for Applications `Application Mail.Read` restrito à caixa
 `opusoperacional@opusce.com.br` (docs/13, "Configuração"), e a rotina agendada do Claude Code

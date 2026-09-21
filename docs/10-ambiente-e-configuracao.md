@@ -197,6 +197,19 @@ GRAPH_TIMEOUT_MS=30000
 # Exige o papel Exchange "Application Mail.ReadWrite"; com Mail.Read só gera aviso.
 GRAPH_ORGANIZE_ENABLED=false
 GRAPH_ORGANIZE_FOLDER=Processos IA
+
+# ── Espelho do iLog (docs/15, Tarefa 30) ─
+ILOG_SYNC_ENABLED=false
+ILOG_MYSQL_HOST=
+ILOG_MYSQL_PORT=3306
+ILOG_MYSQL_USER=
+ILOG_MYSQL_PASSWORD=
+ILOG_MYSQL_DATABASE=ilog
+ILOG_MYSQL_TIMEOUT_MS=10000
+ILOG_SYNC_INTERVAL_MINUTES=5
+ILOG_BACKFILL_DAYS=90
+ILOG_CHANGELOG_LIMIT=2000
+ILOG_SYNC_ACTOR_EMAIL=
 ```
 
 Sobre as variáveis `GRAPH_*` (docs/13, seção "Configuração"):
@@ -217,6 +230,25 @@ Sobre as variáveis `GRAPH_*` (docs/13, seção "Configuração"):
 - `RATE_LIMIT_API_KEY_FAILURE_*`: só respostas `401` em `/intake/*` contam, por IP. O IP de saída da
   nuvem da Anthropic é compartilhado entre clientes, por isso o limite é folgado (50 em 5 min):
   impede lixo em volume sem permitir que um terceiro no mesmo IP bloqueie o agente.
+
+Sobre as variáveis `ILOG_*` (docs/15, seções 5.2 e 5.3):
+
+- **Usuário MySQL somente leitura**, com `SELECT` nos bancos `ilog` (e, na fase seguinte,
+  `ilogcore` para os arquivos). A API ainda abre toda sessão com
+  `SET SESSION TRANSACTION READ ONLY` e `max_execution_time = ILOG_MYSQL_TIMEOUT_MS` — o espelho
+  nunca escreve no iLog, mesmo que o usuário tenha mais permissão do que deveria.
+- Com `ILOG_SYNC_ENABLED=true`, `ILOG_MYSQL_HOST`, `ILOG_MYSQL_USER` e `ILOG_MYSQL_PASSWORD` passam a
+  ser obrigatórias e a API aborta a subida se faltar alguma. O Windows Server precisa alcançar o
+  IP privado do MySQL (firewall/rota) — testar com `Test-NetConnection <host> -Port 3306` antes.
+- O job roda **no processo da API** (não no worker), a cada `ILOG_SYNC_INTERVAL_MINUTES`, porque
+  precisa do Socket.IO para o board receber `process:created` dos processos espelhados. Um único
+  processo da API roda em produção (NSSM, docs/11); o service ainda rejeita ciclos sobrepostos.
+- `ILOG_BACKFILL_DAYS` limita a carga inicial aos processos em aberto abertos nessa janela (~370
+  em 90 dias, em 21/09/2026); os mais antigos entram quando forem alterados no iLog ou quando um
+  e-mail citar um identificador deles. `ILOG_CHANGELOG_LIMIT` protege o primeiro ciclo depois de
+  muito tempo parado: o cursor só avança até onde tudo foi lido, o resto vem no ciclo seguinte.
+- Desligado (`false`, padrão e valor de `.env.test`), o intake usa só o índice local de
+  identificadores; `lookup_process` não consulta nada fora.
 
 Sobre as variáveis `CNPJ_LOOKUP_*`:
 

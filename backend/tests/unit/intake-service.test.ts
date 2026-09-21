@@ -1,4 +1,5 @@
 import { FakeCnpjLookupProvider } from '../helpers/fakes/fake-cnpj-lookup-provider';
+import { FakeIlogProcessSource, makeIlogProcess } from '../helpers/fakes/fake-ilog-process-source';
 import { FakeMailAttachmentProvider } from '../helpers/fakes/fake-mail-attachment-provider';
 import { FakeMailboxOrganizer } from '../helpers/fakes/fake-mailbox-organizer';
 import { FakeMailboxReader } from '../helpers/fakes/fake-mailbox-reader';
@@ -6,16 +7,19 @@ import { FakeStorageProvider } from '../helpers/fakes/fake-storage-provider';
 import { InMemoryCompanyRepository } from '../helpers/fakes/in-memory-company-repository';
 import { InMemoryDocumentRepository } from '../helpers/fakes/in-memory-document-repository';
 import { InMemoryEmailDomainRepository } from '../helpers/fakes/in-memory-email-domain-repository';
+import { InMemoryIlogSyncStateRepository } from '../helpers/fakes/in-memory-ilog-sync-state-repository';
 import { InMemoryIntakeCursorRepository } from '../helpers/fakes/in-memory-intake-cursor-repository';
 import { InMemoryIntakeEventRepository } from '../helpers/fakes/in-memory-intake-event-repository';
 import { InMemoryKanbanStageRepository } from '../helpers/fakes/in-memory-kanban-stage-repository';
 import { InMemoryOrganizationRepository } from '../helpers/fakes/in-memory-organization-repository';
+import { InMemoryProcessIdentifierRepository } from '../helpers/fakes/in-memory-process-identifier-repository';
 import { InMemoryProcessRepository } from '../helpers/fakes/in-memory-process-repository';
 import { InMemoryUserRepository } from '../helpers/fakes/in-memory-user-repository';
 
 import type { Company } from '@/domain/entities/company';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '@/domain/errors/app-error';
 import { DocumentService } from '@/services/document-service';
+import { IlogSyncService } from '@/services/ilog-sync-service';
 import type { AttachIntakeInput, CreateProcessIntakeInput } from '@/services/intake-service';
 import { cleanBodyText, sanitizeFolderName } from '@/services/intake-service';
 import { IntakeService } from '@/services/intake-service';
@@ -40,11 +44,13 @@ interface Context {
   mailAttachmentProvider: FakeMailAttachmentProvider;
   mailboxReader: FakeMailboxReader;
   mailboxOrganizer: FakeMailboxOrganizer;
+  processIdentifierRepository: InMemoryProcessIdentifierRepository;
+  ilogSource: FakeIlogProcessSource;
   clientOrganizationId: string;
 }
 
 async function buildContext(
-  overrides: { cnpjLookup?: boolean; mailAttachments?: boolean } = {},
+  overrides: { cnpjLookup?: boolean; mailAttachments?: boolean; ilog?: boolean } = {},
 ): Promise<Context> {
   const intakeEventRepository = new InMemoryIntakeEventRepository();
   const intakeCursorRepository = new InMemoryIntakeCursorRepository();
@@ -59,6 +65,11 @@ async function buildContext(
   const mailAttachmentProvider = new FakeMailAttachmentProvider();
   const mailboxReader = new FakeMailboxReader();
   const mailboxOrganizer = new FakeMailboxOrganizer();
+  const processIdentifierRepository = new InMemoryProcessIdentifierRepository(
+    processRepository.identifiers,
+    (processId) => processRepository.items.some((p) => p.id === processId && p.deletedAt === null),
+  );
+  const ilogSource = new FakeIlogProcessSource();
 
   const stage = await stageRepository.create({
     name: 'Entrada',
@@ -87,10 +98,36 @@ async function buildContext(
 
   const processService = new ProcessService({
     processRepository,
+    processIdentifierRepository,
     companyRepository,
     stageRepository,
     userRepository,
   });
+  await userRepository.create({
+    name: 'Admin',
+    email: 'admin@opusce.com.br',
+    passwordHash: null,
+    role: 'ADMIN',
+    status: 'ACTIVE',
+    accessScope: 'ORGANIZATION',
+    organizationId: null,
+  });
+  const ilogSyncService =
+    overrides.ilog === true
+      ? new IlogSyncService({
+          source: ilogSource,
+          syncStateRepository: new InMemoryIlogSyncStateRepository(),
+          processRepository,
+          processIdentifierRepository,
+          companyRepository,
+          organizationRepository,
+          emailDomainRepository,
+          userRepository,
+          processService,
+          logger: { info: () => undefined, warn: () => undefined },
+          options: { backfillDays: 90, changelogLimit: 100, actorEmail: null },
+        })
+      : null;
   const documentService = new DocumentService({
     documentRepository,
     processRepository,
@@ -102,11 +139,13 @@ async function buildContext(
     intakeEventRepository,
     intakeCursorRepository,
     processRepository,
+    processIdentifierRepository,
     companyRepository,
     organizationRepository,
     emailDomainRepository,
     processService,
     documentService,
+    ilogSyncService,
     cnpjLookupProvider: overrides.cnpjLookup === false ? null : cnpjLookupProvider,
     mailAttachmentProvider: overrides.mailAttachments === false ? null : mailAttachmentProvider,
     mailboxReader: overrides.mailAttachments === false ? null : mailboxReader,
@@ -128,6 +167,8 @@ async function buildContext(
     mailAttachmentProvider,
     mailboxReader,
     mailboxOrganizer,
+    processIdentifierRepository,
+    ilogSource,
     clientOrganizationId: clientOrganization.id,
   };
 }
@@ -1186,6 +1227,188 @@ describe('IntakeService (docs/13)', () => {
       const byCompany = await ctx.service.lookupProcess({ companyDocument: OTHER_CNPJ, limit: 5 });
       expect(byCompany).toHaveLength(1);
       expect(byCompany[0]?.matchedBy).toBe('PARTIAL');
+    });
+  });
+
+  describe('índice de identificadores e retaguarda do iLog (docs/15)', () => {
+    it('createProcessFromEmail grava no índice os identificadores da referência e os informados', async () => {
+      const ctx = await buildContext();
+      const result = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({
+          reference: '230/26 - DANGB26080406',
+          identifiers: ['MSKU1234567', 'dangb26080406', 'x'],
+        }),
+      );
+      const identifiers = await ctx.processIdentifierRepository.listByProcess(result.process.id);
+      expect(identifiers.map((i) => [i.kind, i.normalized, i.source])).toEqual([
+        ['OTHER', '23026DANGB26080406', 'EMAIL'],
+        ['OPUS_NUMBER', '23026', 'EMAIL'],
+        ['OTHER', 'DANGB26080406', 'EMAIL'],
+        ['CONTAINER', 'MSKU1234567', 'EMAIL'],
+      ]);
+      expect(result.process.identifiers.map((i) => i.value)).toContain('MSKU1234567');
+    });
+
+    it('lookupProcess casa pelo índice (exato por normalizado) e devolve o kind do identificador', async () => {
+      const ctx = await buildContext();
+      const created = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({ reference: 'Novo processo 230/26', identifiers: ['DANGB26080406'] }),
+      );
+
+      const byHbl = await ctx.service.lookupProcess({ ref: 'dangb 26080406', limit: 5 });
+      expect(byHbl.map((m) => [m.process.id, m.matchedBy])).toEqual([
+        [created.process.id, 'OTHER'],
+      ]);
+
+      const byNumber = await ctx.service.lookupProcess({ ref: '230-26', limit: 5 });
+      expect(byNumber[0]).toMatchObject({ matchedBy: 'OPUS_NUMBER' });
+
+      // Sem iLog configurado, nada é consultado fora: um identificador desconhecido só não casa.
+      expect(await ctx.service.lookupProcess({ ref: 'NAOEXISTE99', limit: 5 })).toEqual([]);
+      expect(ctx.ilogSource.calls.findByIdentifier).toBe(0);
+    });
+
+    it('lookupProcess consulta o iLog só quando o índice falha, e espelha o processo na hora', async () => {
+      const ctx = await buildContext({ ilog: true });
+      ctx.ilogSource.processes.set(
+        350368,
+        makeIlogProcess({
+          ilogProcessId: 350368,
+          number: '31435/26',
+          clientRef: 'DANGB26080406',
+          houseBl: 'DANGB26080406',
+          ce: '132605301737430',
+        }),
+      );
+
+      const found = await ctx.service.lookupProcess({ ref: '31435/26', limit: 5 });
+      expect(found).toHaveLength(1);
+      expect(found[0]).toMatchObject({ matchedBy: 'OPUS_NUMBER' });
+      expect(found[0]?.process).toMatchObject({ ilogNumber: '31435/26', source: 'ILOG' });
+      expect(ctx.ilogSource.calls.findByIdentifier).toBe(1);
+      expect(ctx.companyRepository.items[0]).toMatchObject({ cnpj: '12345678000195' });
+
+      // Agora está no índice: o iLog não é consultado de novo, nem por outro identificador do mesmo processo.
+      const again = await ctx.service.lookupProcess({ ref: '132605301737430', limit: 5 });
+      expect(again.map((m) => m.matchedBy)).toEqual(['CE']);
+      expect(ctx.ilogSource.calls.findByIdentifier).toBe(1);
+
+      // Nome de empresa não é identificador: não vai ao iLog.
+      await ctx.service.lookupProcess({ ref: 'Casa e Novidade', limit: 5 });
+      expect(ctx.ilogSource.calls.findByIdentifier).toBe(1);
+    });
+
+    it('attachToProcess resolve o processo por identificador do índice e, se preciso, pelo iLog', async () => {
+      const ctx = await buildContext({ ilog: true });
+      const created = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({ reference: 'Pré-alerta', identifiers: ['HBL-123456'] }),
+      );
+      const attached = await ctx.service.attachToProcess(
+        ACTOR,
+        attachInput({ processRef: 'hbl 123456', files: [pdf('bl.pdf')] }),
+      );
+      expect(attached.process.id).toBe(created.process.id);
+      expect(ctx.ilogSource.calls.findByIdentifier).toBe(0);
+
+      ctx.ilogSource.processes.set(
+        7,
+        makeIlogProcess({ ilogProcessId: 7, number: '31440/26', houseBl: 'ZZZ987654' }),
+      );
+      const viaIlog = await ctx.service.attachToProcess(
+        ACTOR,
+        attachInput({
+          source: { channel: 'EMAIL', externalId: 'msg-3', receivedAt: RECEIVED_AT },
+          processRef: 'ZZZ987654',
+          files: [pdf('bl2.pdf')],
+        }),
+      );
+      expect(viaIlog.process).toMatchObject({ ilogNumber: '31440/26', source: 'ILOG' });
+      expect(
+        ctx.documentRepository.items.filter((d) => d.processId === viaIlog.process.id),
+      ).toHaveLength(1);
+      expect(ctx.ilogSource.calls.findByIdentifier).toBe(1);
+    });
+
+    it('attachToProcess com identificador em dois processos de empresas diferentes é ambíguo', async () => {
+      const ctx = await buildContext();
+      const other = await seedCompany(ctx, OTHER_CNPJ, ctx.clientOrganizationId);
+      await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({ reference: 'A', identifiers: ['CONT-000111'] }),
+      );
+      await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({
+          source: { channel: 'EMAIL', externalId: 'msg-x', receivedAt: RECEIVED_AT },
+          company: { document: other.cnpj },
+          reference: 'B',
+          identifiers: ['CONT-000111'],
+        }),
+      );
+      await expect(
+        ctx.service.attachToProcess(
+          ACTOR,
+          attachInput({ processRef: 'CONT-000111', files: [pdf('a.pdf')] }),
+        ),
+      ).rejects.toMatchObject({ code: 'PROCESS_REF_AMBIGUOUS' });
+    });
+
+    it('createProcessFromEmail não duplica: mesmo identificador na mesma empresa vira complemento', async () => {
+      const ctx = await buildContext();
+      const first = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({ reference: '230/26', identifiers: ['DANGB26080406'] }),
+      );
+      const second = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({
+          source: { channel: 'EMAIL', externalId: 'msg-9', subject: 'BL', receivedAt: RECEIVED_AT },
+          reference: 'BL DANGB26080406',
+          additionalInfo: 'Segue o BL original.',
+          files: [pdf('bl.pdf')],
+        }),
+      );
+      expect(second.process.id).toBe(first.process.id);
+      expect(second.event.kind).toBe('ATTACHMENT');
+      expect(
+        ctx.documentRepository.items.filter((d) => d.processId === first.process.id),
+      ).toHaveLength(1);
+      expect(second.warnings.some((w) => w.includes('Já existia o processo'))).toBe(true);
+      expect(second.process.additionalInfo).toContain('Segue o BL original.');
+      expect(ctx.processRepository.items).toHaveLength(1);
+
+      // Empresa diferente com o mesmo identificador: abre outro (não é o mesmo embarque).
+      const other = await seedCompany(ctx, OTHER_CNPJ, ctx.clientOrganizationId);
+      const third = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({
+          source: { channel: 'EMAIL', externalId: 'msg-10', receivedAt: RECEIVED_AT },
+          company: { document: other.cnpj },
+          reference: 'DANGB26080406',
+        }),
+      );
+      expect(third.process.id).not.toBe(first.process.id);
+      expect(third.event.kind).toBe('PROCESS');
+    });
+
+    it('addReferences alimenta o índice mesmo quando a referência está cheia', async () => {
+      const ctx = await buildContext();
+      const created = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({ reference: 'x'.repeat(250) }),
+      );
+      const result = await ctx.service.attachToProcess(
+        ACTOR,
+        attachInput({ processId: created.process.id, addReferences: ['MSKU7654321'] }),
+      );
+      expect(result.warnings.some((w) => w.includes('Referência cheia'))).toBe(true);
+      const match = await ctx.service.lookupProcess({ ref: 'MSKU7654321', limit: 5 });
+      expect(match.map((m) => [m.process.id, m.matchedBy])).toEqual([
+        [created.process.id, 'CONTAINER'],
+      ]);
     });
   });
 

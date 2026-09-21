@@ -31,6 +31,11 @@ const PROCESS_SORT_FIELDS = ['createdAt', 'stageChangedAt', 'code'] as const;
 
 export const listProcessesQuerySchema = paginationQuerySchema.extend({
   stageId: z.string().min(1).optional(),
+  /** `true` = só vinculados ao iLog; `false` = só sem vínculo (docs/15). */
+  ilogLinked: z
+    .enum(['true', 'false'])
+    .transform((value) => value === 'true')
+    .optional(),
   clientCompanyId: z.string().min(1).optional(),
   responsibleId: z.string().min(1).optional(),
   organizationId: z.string().min(1).optional(),

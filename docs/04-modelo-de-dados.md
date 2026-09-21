@@ -7,7 +7,7 @@ Estas restrições foram verificadas e moldam o schema. Não são preferências 
 | Limitação | Consequência no schema |
 | --- | --- |
 | O provider `sqlserver` **não suporta `enum`** ([prisma/prisma#6823](https://github.com/prisma/prisma/issues/6823)). | Papéis, status e ações de auditoria são `String` com comprimento fixo. Os valores válidos vivem em uniões de tipo TypeScript + schemas Zod, e são espelhados no banco por `CHECK constraint` adicionada via migration manual. |
-| SQL Server aceita **apenas um `NULL`** por índice `UNIQUE`. | Não existe coluna anulável com `@unique`. IDs de provedores sociais foram movidos para `UserIdentity`, com unicidade composta `(provider, providerUserId)` e ambas as colunas obrigatórias. A única exceção é `companies.cnpj` (cadastro pendente, docs/13 decisão 10): anulável **sem** `@unique` no schema, com um índice único **filtrado** (`WHERE cnpj IS NOT NULL`) criado em migration manual — o Prisma ignora índices filtrados na introspecção, então não acusa drift; a unicidade é garantida só pelo banco e `findByCnpj` usa `findFirst`. |
+| SQL Server aceita **apenas um `NULL`** por índice `UNIQUE`. | Não existe coluna anulável com `@unique`. IDs de provedores sociais foram movidos para `UserIdentity`, com unicidade composta `(provider, providerUserId)` e ambas as colunas obrigatórias. As exceções são `companies.cnpj` (cadastro pendente, docs/13 decisão 10) e os vínculos com o iLog `processes.ilogProcessId` / `companies.ilogCompanyId` (docs/15): anuláveis **sem** `@unique` no schema, com índice único **filtrado** (`WHERE col IS NOT NULL`) criado em migration manual — o Prisma ignora índices filtrados na introspecção, então não acusa drift; a unicidade é garantida só pelo banco e as buscas por essas colunas usam `findFirst`. O `WHERE` do índice filtrado é compilado junto com o batch: precisa ficar em migration separada da que cria a coluna (migration `20260922100100`). |
 | `String` mapeia por padrão para `NVARCHAR(1000)` (2000 bytes), acima do limite de chave de índice do SQL Server (900/1700 bytes). | **Toda** coluna usada como PK, FK, `@unique` ou dentro de `@@index` recebe `@db.NVarChar(n)` explícito. |
 | SQL Server rejeita **ciclos e múltiplos caminhos de cascade** ([regras especiais](https://www.prisma.io/docs/orm/v6/prisma-schema/data-model/relations/referential-actions/special-rules-for-referential-actions)). O default do Prisma para relação obrigatória é `onUpdate: Cascade`, que também entra nessa checagem. | `onDelete`/`onUpdate` são declarados explicitamente em **todas** as relações. Cascade existe só onde há um único caminho possível (filhos de `User` e de `Process`). O resto é `NoAction`. |
 | Não há tipo `Json` nativo. | Campos de metadados são `NVARCHAR(MAX)` contendo JSON serializado pela aplicação. |
@@ -29,6 +29,7 @@ erDiagram
     USER ||--o{ PROCESS : "criador / responsável"
     PROCESS ||--o{ PROCESS_HISTORY : "auditoria"
     PROCESS ||--o{ DOCUMENT : "anexos"
+    PROCESS ||--o{ PROCESS_IDENTIFIER : "índice de identificadores (docs/15)"
     USER ||--o{ PROCESS_HISTORY : "autor"
     USER ||--o{ DOCUMENT : "enviou"
 
@@ -158,9 +159,16 @@ export type HistoryAction = (typeof HISTORY_ACTIONS)[number];
 export const COMPANY_DOCUMENT_TYPES = ['CNPJ', 'CPF'] as const;
 export type CompanyDocumentType = (typeof COMPANY_DOCUMENT_TYPES)[number];
 
-/** Origem de processo/documento (docs/13, decisão 7): derivada da credencial/rota, nunca do payload. */
-export const RECORD_SOURCES = ['WEB', 'EMAIL', 'API'] as const;
+/** Origem de processo/documento (docs/13, decisão 7): derivada da credencial/rota, nunca do payload. ILOG = espelho (docs/15). */
+export const RECORD_SOURCES = ['WEB', 'EMAIL', 'API', 'ILOG'] as const;
 export type RecordSource = (typeof RECORD_SOURCES)[number];
+
+/** Índice de identificadores do embarque (docs/15, seção 5.1). */
+export const PROCESS_IDENTIFIER_KINDS = [
+  'OPUS_NUMBER', 'CLIENT_REF', 'HBL', 'MBL', 'CONTAINER', 'INVOICE', 'DI', 'CE', 'DTA', 'OTHER',
+] as const;
+export const PROCESS_IDENTIFIER_SOURCES = ['ILOG', 'EMAIL', 'MANUAL'] as const;
+export const ILOG_SYNC_KEYS = ['ILOG'] as const;
 ```
 
 Esses arrays são a fonte única: alimentam os schemas Zod (`z.enum(ROLES)`), a tipagem do domínio e
@@ -227,6 +235,8 @@ model Company {
   legalName      String   @db.NVarChar(255)
   tradeName      String?  @db.NVarChar(255)
   organizationId String   @db.NVarChar(30)
+  /// `empresa.cod_emp` no iLog (docs/15). Único via índice filtrado (ver "Limitações").
+  ilogCompanyId  Int?
   isActive       Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -368,8 +378,13 @@ model Process {
   reference           String    @db.NVarChar(255)
   /// Campo livre longo
   additionalInfo      String?   @db.NVarChar(Max)
-  /// WEB | EMAIL | API — derivado da autenticação/rota (docs/13, decisão 7)
+  /// WEB | EMAIL | API | ILOG — derivado da autenticação/rota ou do espelho (docs/13, decisão 7; docs/15)
   source              String    @default("WEB") @db.NVarChar(10)
+  /// Vínculo com o iLog (docs/15): processoid (único via índice filtrado), número da Opus
+  /// ("31435/26") e última leitura pelo espelho
+  ilogProcessId       Int?
+  ilogNumber          String?   @db.NVarChar(20)
+  ilogSyncedAt        DateTime?
   /// Solicitante informado no e-mail (texto livre, não FK em User)
   requesterName       String?   @db.NVarChar(200)
   requesterEmail      String?   @db.NVarChar(255)
@@ -397,8 +412,9 @@ model Process {
   createdBy         User        @relation("ProcessCreatedBy", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
   deletedBy         User?       @relation("ProcessDeletedBy", fields: [deletedById], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  history   ProcessHistory[]
-  documents Document[]
+  history     ProcessHistory[]
+  documents   Document[]
+  identifiers ProcessIdentifier[]
 
   @@index([currentStageId])
   @@index([clientCompanyId])
@@ -406,7 +422,45 @@ model Process {
   @@index([responsibleId])
   @@index([deletedAt])
   @@index([createdAt])
+  @@index([ilogNumber])
   @@map("processes")
+}
+
+/// Índice de identificadores do embarque por processo (docs/15, seção 5.1): o que o
+/// intake consulta primeiro para casar um e-mail com um processo — exato por
+/// `normalized` (maiúsculas, só [A-Z0-9]), nunca `contains` em texto livre.
+model ProcessIdentifier {
+  id         String   @id @default(cuid()) @db.NVarChar(30)
+  processId  String   @db.NVarChar(30)
+  /// OPUS_NUMBER | CLIENT_REF | HBL | MBL | CONTAINER | INVOICE | DI | CE | DTA | OTHER
+  kind       String   @db.NVarChar(20)
+  /// Como veio ("SWT 0021/26")
+  value      String   @db.NVarChar(255)
+  /// "SWT002126" — chave de busca
+  normalized String   @db.NVarChar(255)
+  /// ILOG (espelho) | EMAIL (intake) | MANUAL (formulário/edição)
+  source     String   @db.NVarChar(10)
+  createdAt  DateTime @default(now())
+
+  process Process @relation(fields: [processId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([processId, kind, normalized])
+  @@index([normalized])
+  @@map("process_identifiers")
+}
+
+/// Estado do espelho incremental do iLog (docs/15, seção 5.2). Uma linha (`ILOG`).
+model IlogSyncState {
+  key             String    @id @db.NVarChar(20)
+  /// `changelog.ChangedDateTime` até onde o incremental leu, no formato e fuso do MySQL
+  /// ("2026-09-21 17:20:03") — devolvido tal qual, sem conversão de fuso
+  lastChangelogAt String?   @db.NVarChar(30)
+  backfillDone    Boolean   @default(false)
+  lastRunAt       DateTime?
+  lastError       String?   @db.NVarChar(1000)
+  updatedAt       DateTime  @updatedAt
+
+  @@map("ilog_sync_state")
 }
 
 /// Trilha de auditoria append-only.
@@ -501,6 +555,17 @@ ALTER TABLE [processes] ADD CONSTRAINT [CK_processes_source]
 
 ALTER TABLE [documents] ADD CONSTRAINT [CK_documents_source]
   CHECK ([source] IN ('WEB','EMAIL','API'));
+
+-- Tarefa 30 (docs/15), migration 20260922100100_add_check_constraints_ilog_mirror:
+-- RECORD_SOURCES ganha ILOG (as duas constraints acima são recriadas com o valor novo)
+ALTER TABLE [process_identifiers] ADD CONSTRAINT [CK_process_identifiers_kind]
+  CHECK ([kind] IN ('OPUS_NUMBER','CLIENT_REF','HBL','MBL','CONTAINER','INVOICE','DI','CE','DTA','OTHER'));
+
+ALTER TABLE [process_identifiers] ADD CONSTRAINT [CK_process_identifiers_source]
+  CHECK ([source] IN ('ILOG','EMAIL','MANUAL'));
+
+ALTER TABLE [ilog_sync_state] ADD CONSTRAINT [CK_ilog_sync_state_key]
+  CHECK ([key] IN ('ILOG'));
 ```
 
 > **Por que a CHECK constraint fica em migration separada da que cria a coluna:** o SQL Server
@@ -550,6 +615,7 @@ resultado determinístico em caso de empate.
 | `Document` | Lógica: `deletedAt` + `deletedById` + histórico `DOCUMENT_REMOVED`. Arquivo em disco é preservado. |
 | `KanbanStage` | Física, bloqueada se houver processo ativo apontando para ela (RF-32). |
 | `Company` / `Organization` | Nunca excluídas se houver processos ou usuários vinculados (FKs são `NoAction`; a API deve retornar `409 CONFLICT` com explicação em vez de deixar o erro do banco vazar). Preferir `isActive = false`. |
+| `ProcessIdentifier` | Física, em cascata com o processo (é índice, não registro). O espelho do iLog regrava os de `source = ILOG` a cada leitura; os de `EMAIL`/`MANUAL` só somem com o processo. |
 | `User` | Nunca excluído. `status = DISABLED` + revogação dos refresh tokens. Preserva a autoria no histórico. |
 
 ## Seed

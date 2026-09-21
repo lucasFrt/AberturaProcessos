@@ -56,6 +56,7 @@ export class IntakeController {
         requestingCompany: body.requestingCompany,
         reference: body.reference,
         additionalInfo: body.additionalInfo,
+        identifiers: body.identifiers,
         fetchAttachments: body.fetchAttachments,
         files: filesFromRequest(req),
       });

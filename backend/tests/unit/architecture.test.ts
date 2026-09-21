@@ -28,6 +28,7 @@ const FORBIDDEN_INFRA_PATTERNS = [
   /from ['"]@\/infra\/realtime/,
   /from ['"]@\/infra\/cnpj/,
   /from ['"]@\/infra\/graph/,
+  /from ['"]@\/infra\/ilog/,
   /require\(['"]@\/infra\/prisma/,
   /require\(['"]@\/infra\/queue/,
   /require\(['"]@\/infra\/mail/,
@@ -35,13 +36,16 @@ const FORBIDDEN_INFRA_PATTERNS = [
   /require\(['"]@\/infra\/realtime/,
   /require\(['"]@\/infra\/cnpj/,
   /require\(['"]@\/infra\/graph/,
+  /require\(['"]@\/infra\/ilog/,
 ];
 
 const FORBIDDEN_PACKAGE_PATTERNS = [
   /from ['"]@prisma\/client['"]/,
   /from ['"]express['"]/,
+  /from ['"]mysql2/,
   /require\(['"]@prisma\/client['"]\)/,
   /require\(['"]express['"]\)/,
+  /require\(['"]mysql2/,
 ];
 
 /** Lista recursivamente todos os arquivos `.ts` sob `dir`. */

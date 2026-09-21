@@ -11,7 +11,13 @@ import type {
   ProcessDocumentSummary,
   ProcessListItem,
 } from '@/domain/entities/process';
-import type { IntakeChannel, IntakeEventKind } from '@/domain/enums';
+import type { ProcessIdentifierInput } from '@/domain/entities/process-identifier';
+import {
+  classifyIdentifier,
+  extractIdentifierCandidates,
+  normalizeIdentifier,
+} from '@/domain/entities/process-identifier';
+import type { IntakeChannel, IntakeEventKind, ProcessIdentifierKind } from '@/domain/enums';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '@/domain/errors/app-error';
 import type { MailAttachmentProvider } from '@/domain/mail/mail-attachment-provider';
 import type { MailboxOrganizer } from '@/domain/mail/mailbox-organizer';
@@ -26,20 +32,30 @@ import type { EmailDomainRepository } from '@/domain/repositories/email-domain-r
 import type { IntakeCursorRepository } from '@/domain/repositories/intake-cursor-repository';
 import type { IntakeEventRepository } from '@/domain/repositories/intake-event-repository';
 import type { OrganizationRepository } from '@/domain/repositories/organization-repository';
+import type { ProcessIdentifierRepository } from '@/domain/repositories/process-identifier-repository';
 import type { ProcessRepository } from '@/domain/repositories/process-repository';
 import type { DocumentService, UploadFileInput } from '@/services/document-service';
+import type { IlogSyncService } from '@/services/ilog-sync-service';
 import type { ProcessService } from '@/services/process-service';
 import { classifyDocument, formatDocument, normalizeCnpjDigits } from '@/shared/cnpj';
+import { PUBLIC_WEBMAIL_DOMAINS } from '@/shared/email-domains';
 
 export interface IntakeServiceDeps {
   intakeEventRepository: IntakeEventRepository;
   intakeCursorRepository: IntakeCursorRepository;
   processRepository: ProcessRepository;
+  /** Índice de identificadores (docs/15): primeira consulta de `lookup`/`attach`. */
+  processIdentifierRepository: ProcessIdentifierRepository;
   companyRepository: CompanyRepository;
   organizationRepository: OrganizationRepository;
   emailDomainRepository: EmailDomainRepository;
   processService: ProcessService;
   documentService: DocumentService;
+  /**
+   * `null` = `ILOG_SYNC_ENABLED=false`. Com ele, um identificador que o
+   * índice local não tem é procurado no iLog uma vez (retaguarda B, docs/15).
+   */
+  ilogSyncService: IlogSyncService | null;
   /** `null` = consulta na Receita desligada (docs/10); a razão social vem do payload. */
   cnpjLookupProvider: CnpjLookupProvider | null;
   /** `null` = `GRAPH_INTAKE_ENABLED=false`; `fetchAttachments` responde 503 (docs/13, decisão 3). */
@@ -98,6 +114,12 @@ export interface CreateProcessIntakeInput {
   requestingCompany?: IntakeCompanyRef | null | undefined;
   reference: string;
   additionalInfo?: string | null | undefined;
+  /**
+   * Identificadores do embarque que o e-mail traz (HBL, contêiner, número
+   * do agente...), além do que a `reference` já contém — alimentam o índice
+   * (docs/15) para os próximos documentos casarem.
+   */
+  identifiers?: string[] | null | undefined;
   /** Baixar anexos da mensagem `source.externalId` pelo `MailAttachmentProvider`. */
   fetchAttachments: boolean;
   /** Arquivos enviados no multipart (quando o orquestrador já os tem em disco). */
@@ -206,7 +228,11 @@ export interface AdvanceCursorResult {
   advanced: boolean;
 }
 
-export type ProcessMatchKind = 'CODE' | 'REFERENCE' | 'PARTIAL';
+/**
+ * Como o candidato casou: código, referência exata, um identificador do
+ * índice (o `kind` dele: `HBL`, `OPUS_NUMBER`...) ou busca parcial.
+ */
+export type ProcessMatchKind = 'CODE' | 'REFERENCE' | ProcessIdentifierKind | 'PARTIAL';
 
 export interface ProcessMatch {
   process: ProcessListItem;
@@ -221,35 +247,6 @@ export interface LookupProcessQuery {
 
 /** O intake é interno (OPERATIONAL/ADMIN via chave de API): escopo sempre ALL. */
 const ALL: AccessScope = { kind: 'ALL' };
-
-/**
- * Domínios de webmail público: um solicitante `@gmail.com` não representa
- * uma organização, então o intake **não** cadastra esses domínios em
- * `EmailDomain` (docs/13, decisão 5) — cadastrar daria a qualquer conta
- * Gmail vínculo automático com a organização criada.
- */
-const PUBLIC_WEBMAIL_DOMAINS = new Set([
-  'gmail.com',
-  'googlemail.com',
-  'hotmail.com',
-  'hotmail.com.br',
-  'outlook.com',
-  'outlook.com.br',
-  'live.com',
-  'msn.com',
-  'yahoo.com',
-  'yahoo.com.br',
-  'icloud.com',
-  'me.com',
-  'aol.com',
-  'uol.com.br',
-  'bol.com.br',
-  'terra.com.br',
-  'ig.com.br',
-  'globo.com',
-  'proton.me',
-  'protonmail.com',
-]);
 
 function emailDomainOf(email: string): string | null {
   const at = email.lastIndexOf('@');
@@ -325,6 +322,23 @@ function formatSaoPaulo(date: Date): string {
   }).format(date);
 }
 
+/** Identificadores da referência + os informados explicitamente, classificados pelo formato (docs/15). */
+function identifiersFromInput(
+  reference: string,
+  explicit: string[] | null | undefined,
+): ProcessIdentifierInput[] {
+  const out = reference.length > 0 ? extractIdentifierCandidates(reference) : [];
+  const seen = new Set(out.map((item) => normalizeIdentifier(item.value)));
+  for (const raw of explicit ?? []) {
+    const value = raw.trim();
+    const normalized = normalizeIdentifier(value);
+    if (normalized.length < 4 || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push({ kind: classifyIdentifier(value), value });
+  }
+  return out;
+}
+
 /** Forma reduzida de um candidato, para o `details` de 404/409 e para o lookup (docs/05). */
 export function toCandidate(item: ProcessListItem): {
   id: string;
@@ -398,18 +412,52 @@ export class IntakeService {
           requestingCompanyId = requesting.company.id;
         }
 
-        const created = await this.deps.processService.create(actorId, ALL, {
-          clientCompanyId: client.company.id,
-          requestingCompanyId,
-          reference: input.reference,
-          additionalInfo: input.additionalInfo ?? null,
-          source: 'EMAIL',
-          requester: { name: input.requester.name ?? null, email: input.requester.email },
-          receivedAt: input.source.receivedAt,
-        });
-        processId = created.id;
-        // Grava o vínculo já: se o upload falhar, a retomada anexa a este processo.
-        await this.deps.intakeEventRepository.update(event.id, { processId });
+        const identifiers = identifiersFromInput(input.reference, input.identifiers);
+
+        // Um processo por embarque (docs/13, decisão 11): se a mesma empresa
+        // já tem processo com um destes identificadores (aberto por e-mail
+        // anterior ou espelhado do iLog), este e-mail complementa aquele.
+        const existing = client.created
+          ? null
+          : await this.findExistingForCompany(identifiers, client.company.id);
+        if (existing) {
+          processId = existing.id;
+          warnings.push(
+            `Já existia o processo ${existing.code} (${existing.reference}) desta empresa com o mesmo identificador: e-mail anexado a ele em vez de abrir outro.`,
+          );
+          await this.deps.processIdentifierRepository.addForProcess(
+            processId,
+            'EMAIL',
+            identifiers,
+          );
+          await this.deps.intakeEventRepository.update(event.id, {
+            processId,
+            kind: 'ATTACHMENT',
+          });
+          if (input.additionalInfo) {
+            await this.appendNote(processId, actorId, {
+              source: input.source,
+              requester: input.requester,
+              note: input.additionalInfo,
+              fetchAttachments: false,
+              files: [],
+            });
+          }
+        } else {
+          const created = await this.deps.processService.create(actorId, ALL, {
+            clientCompanyId: client.company.id,
+            requestingCompanyId,
+            reference: input.reference,
+            additionalInfo: input.additionalInfo ?? null,
+            source: 'EMAIL',
+            requester: { name: input.requester.name ?? null, email: input.requester.email },
+            receivedAt: input.source.receivedAt,
+            identifiers,
+          });
+          processId = created.id;
+          // Grava o vínculo já: se o upload falhar, a retomada anexa a este processo.
+          await this.deps.intakeEventRepository.update(event.id, { processId });
+        }
       } else {
         warnings.push(
           `Execução anterior falhou depois de criar o processo; documentos anexados ao processo existente.`,
@@ -499,6 +547,11 @@ export class IntakeService {
       const exact = await this.deps.processRepository.findExactByRef(ref);
       for (const item of exact) {
         push(item, item.code.toUpperCase() === ref.toUpperCase() ? 'CODE' : 'REFERENCE');
+      }
+      // Índice de identificadores (docs/15): exato por normalizado, com o
+      // `kind` casado; se o índice não tem, o iLog é consultado uma vez.
+      for (const match of await this.matchByIdentifier(ref, true)) {
+        push(match.process, match.kind);
       }
       if (matches.length < query.limit) {
         const partial = await this.deps.processRepository.list(
@@ -1276,6 +1329,19 @@ export class IntakeService {
       );
     }
 
+    // Índice de identificadores (docs/15) e, se preciso, o iLog.
+    const indexed = (await this.matchByIdentifier(ref, true)).map((match) => match.process);
+    if (indexed.length === 1 && indexed[0]) return indexed[0].id;
+    if (indexed.length > 1) {
+      const narrowed = await this.narrowByRequesterOrganization(indexed, input.requester.email);
+      if (narrowed.length === 1 && narrowed[0]) return narrowed[0].id;
+      throw new ConflictError(
+        'PROCESS_REF_AMBIGUOUS',
+        `Mais de um processo tem o identificador "${ref}". Escolha um e chame de novo com processId.`,
+        { candidates: (narrowed.length > 0 ? narrowed : indexed).map(toCandidate) },
+      );
+    }
+
     const partial = await this.deps.processRepository.list(
       { q: ref },
       ALL,
@@ -1387,8 +1453,74 @@ export class IntakeService {
       reference = next;
     }
     if (reference !== current.reference) {
-      await this.deps.processService.update(processId, actorId, ALL, { reference });
+      await this.deps.processService.update(processId, actorId, ALL, {
+        reference,
+        identifierSource: 'EMAIL',
+      });
     }
+    // O índice recebe todos, coubessem ou não na referência (docs/15).
+    await this.deps.processIdentifierRepository.addForProcess(
+      processId,
+      'EMAIL',
+      identifiersFromInput('', references),
+    );
+  }
+
+  // ── Índice de identificadores (docs/15) ───────────────────────────
+
+  /**
+   * Processos ativos com `ref` no índice (exato por normalizado). Sem
+   * resultado e com `consultIlog`, pergunta ao iLog uma vez — só para o que
+   * parece identificador (tem dígito e tamanho mínimo), nunca para nomes.
+   */
+  private async matchByIdentifier(
+    ref: string,
+    consultIlog: boolean,
+  ): Promise<{ process: ProcessListItem; kind: ProcessIdentifierKind }[]> {
+    const normalized = normalizeIdentifier(ref);
+    if (normalized.length < 4 || !/\d/.test(normalized)) return [];
+
+    const found = await this.matchIndex(normalized);
+    if (found.length > 0 || !consultIlog || !this.deps.ilogSyncService) return found;
+
+    const imported = await this.deps.ilogSyncService.importByIdentifier(ref);
+    if (imported.length === 0) return [];
+    const indexed = await this.matchIndex(normalized);
+    if (indexed.length > 0) return indexed;
+    // O iLog achou, mas o índice ainda não reflete (ex.: casamento por
+    // número parcial): devolve o que veio, classificado pelo formato.
+    return imported.map((process) => ({ process, kind: classifyIdentifier(ref) }));
+  }
+
+  private async matchIndex(
+    normalized: string,
+  ): Promise<{ process: ProcessListItem; kind: ProcessIdentifierKind }[]> {
+    const matches = await this.deps.processIdentifierRepository.findByNormalized([normalized]);
+    if (matches.length === 0) return [];
+    const kindByProcess = new Map<string, ProcessIdentifierKind>();
+    for (const match of matches) {
+      if (!kindByProcess.has(match.processId)) kindByProcess.set(match.processId, match.kind);
+    }
+    const items = await this.deps.processRepository.findListItemsByIds([...kindByProcess.keys()]);
+    return items.map((process) => ({
+      process,
+      kind: kindByProcess.get(process.id) ?? 'OTHER',
+    }));
+  }
+
+  /** Processo ativo da mesma empresa que já tem um destes identificadores (um processo por BL). */
+  private async findExistingForCompany(
+    identifiers: ProcessIdentifierInput[],
+    companyId: string,
+  ): Promise<ProcessListItem | null> {
+    const normalized = identifiers.map((item) => normalizeIdentifier(item.value));
+    const matches = await this.deps.processIdentifierRepository.findByNormalized(normalized);
+    if (matches.length === 0) return null;
+    const items = await this.deps.processRepository.findListItemsByIds([
+      ...new Set(matches.map((match) => match.processId)),
+    ]);
+    const sameCompany = items.filter((item) => item.clientCompany.id === companyId);
+    return sameCompany.length === 1 ? (sameCompany[0] ?? null) : null;
   }
 
   // ── Nota do e-mail em additionalInfo ──────────────────────────────

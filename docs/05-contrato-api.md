@@ -345,7 +345,9 @@ populados além do que já existe).
 ### `GET /processes`
 
 Filtros: `stageId`, `clientCompanyId`, `responsibleId`, `organizationId` (ADMIN/OPERATIONAL),
-`q` (busca em `code` e `reference`), `createdFrom`, `createdTo`, `page`, `pageSize`, `sort`, `order`.
+`q` (busca em `code`, `reference` e `ilogNumber`), `ilogLinked` (`true` = só processos vinculados ao
+iLog, `false` = só sem vínculo; docs/15), `createdFrom`, `createdTo`, `page`, `pageSize`, `sort`,
+`order`.
 
 Item da lista:
 
@@ -363,11 +365,15 @@ Item da lista:
   "requesterName": "João",
   "requesterEmail": "joao@clientex.com.br",
   "receivedAt": "2026-08-01T09:10:00.000Z",
+  "ilogNumber": "31435/26",
   "stageChangedAt": "2026-08-05T12:00:00.000Z",
   "completedAt": null,
   "createdAt": "2026-08-01T09:15:00.000Z"
 }
 ```
+
+`ilogNumber` (docs/15): número da Opus no iLog (`nro_pro/ano_pro`) quando o processo está
+vinculado ao espelho; `null` caso contrário.
 
 ### `GET /processes/board`
 
@@ -410,10 +416,18 @@ Detalhe agregado para a gaveta:
   "requesterName": null,
   "requesterEmail": null,
   "receivedAt": null,
+  "ilogProcessId": 350368,
+  "ilogNumber": "31435/26",
+  "ilogSyncedAt": "2026-09-21T20:35:00.000Z",
   "stageChangedAt": "2026-08-05T12:00:00.000Z",
   "completedAt": null,
   "createdAt": "2026-08-01T09:15:00.000Z",
   "updatedAt": "2026-08-05T12:00:00.000Z",
+  "identifiers": [
+    { "id": "cpi1", "kind": "OPUS_NUMBER", "value": "31435/26", "source": "ILOG", "createdAt": "..." },
+    { "id": "cpi2", "kind": "HBL", "value": "DANGB26080406", "source": "ILOG", "createdAt": "..." },
+    { "id": "cpi3", "kind": "CONTAINER", "value": "MSKU1234567", "source": "EMAIL", "createdAt": "..." }
+  ],
   "documents": [
     {
       "id": "cdo1", "originalName": "invoice.pdf", "mimeType": "application/pdf",
@@ -442,8 +456,16 @@ Detalhe agregado para a gaveta:
 
 `source`, `requesterName`, `requesterEmail` e `receivedAt` (docs/13, decisão 7) existem na
 listagem e no detalhe. `source` **não é aceito no payload** de `POST /processes`: é derivado da
-credencial (JWT → `WEB`, `X-Api-Key` → `API`) ou da rota de intake (`EMAIL`). Os campos de
-solicitante e `receivedAt` só são preenchidos pelo intake.
+credencial (JWT → `WEB`, `X-Api-Key` → `API`), da rota de intake (`EMAIL`) ou do espelho do iLog
+(`ILOG`, docs/15). Os campos de solicitante e `receivedAt` só são preenchidos pelo intake (e
+`receivedAt` = data de abertura no iLog, para os espelhados).
+
+`ilogProcessId`/`ilogNumber`/`ilogSyncedAt` (docs/15): vínculo com o processo do iLog — `null` nos
+três quando ainda não há processo lá. `identifiers` é o índice de identificadores do embarque:
+`kind` ∈ `OPUS_NUMBER | CLIENT_REF | HBL | MBL | CONTAINER | INVOICE | DI | CE | DTA | OTHER`,
+`source` ∈ `ILOG` (espelho) | `EMAIL` (intake) | `MANUAL` (formulário/edição). É alimentado
+automaticamente: da `reference` a cada criação/edição, de `identifiers`/`addReferences` do intake
+e do iLog a cada leitura. Não há endpoint para editá-lo à mão.
 
 `permissions` é calculado no servidor para o usuário da requisição. A UI usa esse objeto para
 habilitar/desabilitar ações, mas a autorização real continua sendo feita em cada endpoint.
@@ -572,6 +594,14 @@ Abre um processo a partir de um e-mail (docs/13, decisões 3 a 5).
   quem escreveu.
 - `fetchAttachments: true` faz o servidor baixar os anexos da mensagem pelo Graph (`GRAPH_*`).
   Anexos inline (assinaturas) são ignorados; acima de `MAX_UPLOAD_SIZE_MB` são pulados com aviso.
+- `identifiers` (opcional, até 20 itens de 3–100 caracteres; docs/15): identificadores do embarque
+  que o e-mail traz além da `reference` (HBL, contêineres, número do agente, fatura...). Entram no
+  índice do processo com `source = EMAIL`, junto com os extraídos da própria `reference`.
+- **Um processo por embarque** (docs/13, decisão 11): se a empresa resolvida já tem um processo
+  ativo com um desses identificadores (aberto por e-mail anterior ou espelhado do iLog), o servidor
+  **não cria outro** — anexa arquivos, nota (`additionalInfo`) e identificadores àquele processo,
+  responde `201` com ele, `event.kind = "ATTACHMENT"` e um aviso "Já existia o processo…" em
+  `warnings`.
 
 `201` (ou `200` com `duplicate: true` se o `externalId` já foi processado):
 
@@ -609,10 +639,13 @@ Anexa documentos e/ou uma nota a um processo existente citado no e-mail (docs/13
 }
 ```
 
-Resolução de `processRef`: `code` exato (case-insensitive) → `reference` exata → se houver mais
-de uma, desempate pela organização do domínio do solicitante → `409 PROCESS_REF_AMBIGUOUS` com
-`details.candidates` → nenhum, `404 PROCESS_REF_NOT_FOUND` com até 5 candidatos parciais. Com
-`processId` a resolução é pulada. `note` é acrescentada a `additionalInfo` com o carimbo
+Resolução de `processRef`: `code` exato (case-insensitive) → `reference` exata → **índice de
+identificadores** (exato por valor normalizado: maiúsculas, só letras e dígitos, então `31435/26`
+= `31435-26`; docs/15) → se o índice não tem e `ILOG_SYNC_ENABLED`, consulta o iLog uma vez e
+espelha o processo encontrado → em qualquer etapa com mais de um candidato, desempate pela
+organização do domínio do solicitante → `409 PROCESS_REF_AMBIGUOUS` com `details.candidates` →
+nenhum, `404 PROCESS_REF_NOT_FOUND` com até 5 candidatos parciais. Com `processId` a resolução é
+pulada. `note` é acrescentada a `additionalInfo` com o carimbo
 `--- E-mail de João <joao@clientex.com.br> em 19/09/2026 05:00 ---` e gera `PROCESS_UPDATED`.
 Sem arquivos, sem `fetchAttachments` e sem `note` → `400`.
 
@@ -625,21 +658,29 @@ evento passa a refletir a tentativa atual (`kind`, `externalId`).
 - `addReferences` (opcional, até 10 itens de 3–100 caracteres): identificadores do embarque que
   este e-mail revelou (HBL, contêiner, número do agente, PO...). Os que ainda não constam na
   `reference` do processo são acrescentados a ela (` / ` como separador, até 255 caracteres — o que
-  não couber vira aviso), gerando `PROCESS_UPDATED` no histórico. É o que faz o próximo documento do
-  mesmo embarque, vindo de outro remetente com outro número, encontrar o processo pelo `lookup`
+  não couber vira aviso), gerando `PROCESS_UPDATED` no histórico, e **todos** entram no índice de
+  identificadores (`source = EMAIL`), coubessem ou não. É o que faz o próximo documento do mesmo
+  embarque, vindo de outro remetente com outro número, encontrar o processo pelo `lookup`
   (docs/13, decisão 11). Com `addReferences`, a chamada é válida mesmo sem arquivos e sem `note`.
 
 ### `GET /intake/processes/lookup`
 
 Candidatos para o agente conferir antes de decidir entre abrir e complementar. Query: `ref`
-(código ou referência), `companyDocument` (filtra pelo CNPJ/CPF cliente), `limit` (padrão 5, máx.
-20). Exige `ref` ou `companyDocument`.
+(código, referência ou **um** identificador do embarque), `companyDocument` (filtra pelo CNPJ/CPF
+cliente), `limit` (padrão 5, máx. 20). Exige `ref` ou `companyDocument`.
 
 ```json
-{ "matches": [ { "matchedBy": "CODE", "process": { "...": "item de listagem" } }, { "matchedBy": "PARTIAL", "process": { "...": "" } } ] }
+{ "matches": [ { "matchedBy": "CODE", "process": { "...": "item de listagem" } }, { "matchedBy": "HBL", "process": { "...": "" } }, { "matchedBy": "PARTIAL", "process": { "...": "" } } ] }
 ```
 
-`matchedBy`: `CODE` (código exato), `REFERENCE` (referência exata), `PARTIAL` (contém).
+`matchedBy`: `CODE` (código exato), `REFERENCE` (referência exata), um `kind` do índice de
+identificadores (`OPUS_NUMBER`, `CLIENT_REF`, `HBL`, `MBL`, `CONTAINER`, `INVOICE`, `DI`, `CE`,
+`DTA`, `OTHER` — casamento exato pelo valor normalizado; docs/15) ou `PARTIAL` (contém). Ordem:
+exatos, índice, parciais. Quando o índice não tem o identificador e `ILOG_SYNC_ENABLED=true`, o
+servidor consulta o iLog **uma vez** (só para `ref` com cara de identificador: pelo menos um
+dígito e 4 caracteres normalizados) e espelha o processo encontrado antes de responder — a
+retaguarda B do docs/15. Falha do iLog não falha o lookup: fica registrada em
+`IlogSyncState.lastError` e a resposta segue sem ele.
 
 ### `GET /intake/events`
 

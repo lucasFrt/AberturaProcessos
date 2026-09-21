@@ -7,7 +7,12 @@ sistema** (`/intake/mailbox/*`, que consulta o Microsoft Graph com credenciais d
 sistema e pelas pastas `Processos IA/<Organização>` que o servidor cria na caixa (docs/13, decisão
 12). Fundamentação em `docs/14-viabilidade-rotina-nuvem.md`; contrato HTTP em
 `docs/05-contrato-api.md`, seção "Intake"; leitura pelo servidor, cursor, remetentes bloqueados e
-documentos de terceiros em `docs/13-integracao-ia-email.md`, decisões 9, 11 e 12.
+documentos de terceiros em `docs/13-integracao-ia-email.md`, decisões 9, 11 e 12; o espelho do
+iLog e o índice de identificadores (o que faz o `lookup` achar o processo pelo HBL, contêiner ou
+número da Opus, e consultar o iLog sozinho quando preciso) em `docs/15`.
+
+Versão: **v9** (22/09/2026) — `identifiers` na criação, `matchedBy` por tipo de identificador,
+"já existia" tratado pelo servidor, `ilogNumber` no relatório.
 
 ## Pré-requisitos (fora do prompt)
 
@@ -214,13 +219,22 @@ curl -sS "https://<API_HOST>/api/v1/intake/events?externalId=$(printf %s "$ID" |
   | jq '{status: .data[0].status, kind: .data[0].kind, processId: .data[0].processId}'
 ```
 
-Procurar processo existente (código, referência ou identificador do embarque; opcionalmente o
-CNPJ/CPF do cliente):
+Procurar processo existente (código, referência ou **um** identificador do embarque por chamada;
+opcionalmente o CNPJ/CPF do cliente):
 
 ```bash
 curl -sS "https://<API_HOST>/api/v1/intake/processes/lookup?ref=$(printf %s "$REF" | jq -sRr @uri)&limit=5" \
-  | jq '.matches[] | {matchedBy, id: .process.id, code: .process.code, reference: .process.reference, company: .process.clientCompany.legalName, stage: .process.currentStage.name}'
+  | jq '.matches[] | {matchedBy, id: .process.id, code: .process.code, ilog: .process.ilogNumber, reference: .process.reference, company: .process.clientCompany.legalName, stage: .process.currentStage.name}'
 ```
+
+`matchedBy` diz como casou: `CODE`/`REFERENCE` (exato), `OPUS_NUMBER`/`HBL`/`MBL`/`CONTAINER`/
+`INVOICE`/`DI`/`CE`/`DTA`/`CLIENT_REF`/`OTHER` (um identificador do embarque, **exato**, mesmo
+com grafia diferente: `31435/26` = `31435-26`), ou `PARTIAL` (aproximado — só vale se for o
+mesmo embarque). O servidor procura primeiro no índice do sistema e, se não achar, **consulta o
+iLog** (sistema de comex, onde a equipe abre os processos) e traz o processo de lá na hora —
+você não precisa fazer nada para isso. `ilog` preenchido (`"31435/26"`) = o processo existe no
+iLog. Procure pelo identificador mais específico primeiro (número da Opus, depois HBL/BL, depois
+contêiner, depois pedido) e pare no primeiro que casar por identificador.
 
 Abrir processo novo:
 
@@ -232,14 +246,21 @@ cat > /tmp/novo.json <<'JSON'
   "company": { "document": "<CNPJ ou CPF do CLIENTE como está no e-mail, ou null>", "name": "<nome do CLIENTE como está no e-mail, ou null>", "senderIsClient": true },
   "requestingCompany": null,
   "reference": "<todos os identificadores do embarque separados por ' / '>",
+  "identifiers": ["<cada identificador do embarque da ficha, um por item, como está no e-mail>"],
   "additionalInfo": "<resumo fiel do corpo: o que é, o que pede, prazos, pendências, contatos>",
   "fetchAttachments": true
 }
 JSON
 curl -sS -X POST "https://<API_HOST>/api/v1/intake/processes" -H "Content-Type: application/json" \
   --data-binary @/tmp/novo.json \
-  | jq '{ok: (.error == null), duplicate, code: .process.code, error: .error.code, message: .error.message, candidates: .error.details.candidates, company, organization, documents: [.documents[]?.originalName], warnings}'
+  | jq '{ok: (.error == null), duplicate, kind: .event.kind, code: .process.code, ilog: .process.ilogNumber, error: .error.code, message: .error.message, candidates: .error.details.candidates, company, organization, documents: [.documents[]?.originalName], warnings}'
 ```
+
+`identifiers` alimenta o índice que fará os próximos documentos (o BL original do armador, a
+minuta do terminal) encontrarem este processo. Se a resposta vier com `kind: "ATTACHMENT"` e um
+aviso "Já existia o processo…", o sistema já tinha um processo desta empresa com um desses
+identificadores (aberto antes ou vindo do iLog) e anexou tudo a ele em vez de abrir outro —
+relate como **documento anexado**, não como processo criado.
 
 Anexar a processo existente (documentos, nota e identificadores novos):
 
@@ -257,7 +278,7 @@ cat > /tmp/anexo.json <<'JSON'
 JSON
 curl -sS -X POST "https://<API_HOST>/api/v1/intake/attachments" -H "Content-Type: application/json" \
   --data-binary @/tmp/anexo.json \
-  | jq '{ok: (.error == null), duplicate, code: .process.code, reference: .process.reference, error: .error.code, message: .error.message, candidates: .error.details.candidates, documents: [.documents[]?.originalName], warnings}'
+  | jq '{ok: (.error == null), duplicate, code: .process.code, ilog: .process.ilogNumber, reference: .process.reference, error: .error.code, message: .error.message, candidates: .error.details.candidates, documents: [.documents[]?.originalName], warnings}'
 ```
 
 Registrar e-mail lido que não vira processo (fica na auditoria com o motivo):
@@ -284,7 +305,7 @@ Códigos de erro e o que fazer:
 | `error.code` | Ação |
 | --- | --- |
 | `PROCESS_REF_AMBIGUOUS` (409) | Em `candidates`, escolha o processo cujo cliente corresponde ao e-mail e que seja o mais recente; chame de novo com `processId`. Sem certeza → escale listando os candidatos. |
-| `PROCESS_REF_NOT_FOUND` (404) | Se `candidates` tiver **um** processo do mesmo embarque (mesmo BL, ou mesmo número de processo e mesmo cliente), use o `id` dele em `processId`. Senão o processo não existe: registre `skip` com `IGNORED` e motivo `sem processo para <identificadores>`. Nunca crie processo a partir de documento. |
+| `PROCESS_REF_NOT_FOUND` (404) | O servidor já procurou no índice **e no iLog**. Se `candidates` tiver **um** processo do mesmo embarque (mesmo BL, ou mesmo número de processo e mesmo cliente), use o `id` dele em `processId`. Senão tente uma vez com outro identificador do e-mail (o HBL, se procurou pelo contêiner). Nada → o processo não existe: registre `skip` com `IGNORED` e motivo `sem processo para <identificadores>`. Nunca crie processo a partir de documento. |
 | `COMPANY_INACTIVE` (409) | Escale: empresa desativada por decisão humana. |
 | `COMPANY_AMBIGUOUS` (409) | Mais de uma empresa corresponde ao domínio/nome. Em `details.candidates`, escolha pela razão social/nome fantasia que aparece no e-mail e chame de novo com `company.document` = o `cnpj` dela. Sem certeza → escale listando os candidatos. |
 | `COMPANY_REQUIRED` (400) | Não deu para identificar o cliente (remetente de webmail sem CNPJ). Se o e-mail nomeia a empresa do cliente, chame de novo com `company.name`; senão escale `cliente não identificado`. |
@@ -320,19 +341,22 @@ Códigos de erro e o que fazer:
       - **Pedido de abertura vindo do CLIENTE** — papel CLIENTE e o e-mail pede abertura de
         embarque/importação/exportação ou manda "os documentos do processo X" de um embarque novo
         ("Novo Processo - 230/26", "Processo novo 0190", "favor abrir"), com ao menos um
-        identificador. Confira com `lookup` que ainda não existe (`CODE`/`REFERENCE` = existe →
-        é COMPLEMENTO). Não existe → **NOVO PROCESSO**.
+        identificador. Confira com `lookup` que ainda não existe (`CODE`/`REFERENCE` ou
+        qualquer `matchedBy` de identificador = existe → é COMPLEMENTO; inclusive quando o
+        processo veio do iLog, `ilog` preenchido). Não existe → **NOVO PROCESSO**.
       - **Documento de embarque** (invoice, packing, BL/HBL/MBL, pré-alerta, minuta de
         armazenagem, boleto, DTA, DUIMP, comprovante, CE, draft, NF de importação, instrução de
         carregamento, remoção) de **qualquer remetente externo**, inclusive respostas
         (`RES:`/`Re:`) numa thread do embarque, com ao menos um identificador → procure o processo
-        com `lookup`, identificador mais específico primeiro. `CODE`/`REFERENCE` = achou;
-        `PARTIAL` só vale se for o **mesmo embarque** (mesmo BL, ou mesmo número de processo com
-        o mesmo cliente). **Confira o BL**: se o processo já tem um BL na referência e o e-mail
-        traz outro BL, não é esse processo. Achou → **COMPLEMENTO**. Não achou → **IGNORAR** com
-        motivo `sem processo para <identificadores>` (nunca crie processo a partir de documento de
-        terceiro; o remetente CLIENTE que manda documento de embarque *já aberto* sem processo
-        também cai aqui).
+        com `lookup`, identificador mais específico primeiro (uma chamada por identificador, até
+        achar). `CODE`/`REFERENCE` ou `matchedBy` de identificador (`HBL`, `OPUS_NUMBER`,
+        `CONTAINER`…) = achou; `PARTIAL` só vale se for o **mesmo embarque** (mesmo BL, ou mesmo
+        número de processo com o mesmo cliente). **Confira o BL**: se o processo já tem um BL
+        (na referência ou no que casou) e o e-mail traz outro BL, não é esse processo. Achou →
+        **COMPLEMENTO**. Não achou em nenhum identificador (o servidor já consultou o iLog) →
+        **IGNORAR** com motivo `sem processo para <identificadores>` (nunca crie processo a
+        partir de documento de terceiro; o remetente CLIENTE que manda documento de embarque
+        *já aberto* sem processo também cai aqui).
       - O e-mail traz documentos/BLs de **mais de um embarque** → **ESCALAR** `vários embarques
         no mesmo e-mail`.
       - Documento sem nenhum identificador → **ESCALAR** `sem identificador de embarque`.
@@ -345,9 +369,11 @@ Códigos de erro e o que fazer:
         do e-mail que ainda não aparecem em `reference` do processo.
       - **NOVO PROCESSO** (só papel CLIENTE) → `POST /intake/processes` com `reference` = os
         identificadores da ficha (ordem e limite da seção "O que é identificador" — inclua o BL
-        se aparecer no corpo ou no nome do anexo, ex.: `DANGB26080406`); `company.document` se o
+        se aparecer no corpo ou no nome do anexo, ex.: `DANGB26080406`); `identifiers` = os
+        mesmos identificadores, um por item (todos, sem o limite de 6); `company.document` se o
         CNPJ/CPF do cliente estiver no e-mail, senão `null`; `company.name` = cliente da ficha;
-        `senderIsClient: true`; `requester` = quem escreveu.
+        `senderIsClient: true`; `requester` = quem escreveu. Resposta com `kind: "ATTACHMENT"`
+        = já existia; conte como documento anexado.
       - **IGNORAR** / **ESCALAR** → `POST /intake/events/skip` com o motivo.
    6. Acrescente ficha + resultado a `/tmp/relatorio.md`.
 5. **Fim da página**: `PUT /intake/cursor` com o `nextAfter` da listagem. Se `hasMore` for `true`,
@@ -377,7 +403,7 @@ PROCESSOS CRIADOS
 • PRC-2026-00042 — <cliente>[ (cadastro pendente)] — <referência> — <n> anexos: <nomes dos arquivos> — de <empresa remetente>
 
 DOCUMENTOS ANEXADOS
-• PRC-2026-00039 — <o que é: "HBL original", "commercial invoice final"> (<arquivo>) — de <empresa remetente>[ — referência agora: <referência>]
+• PRC-2026-00039[ (iLog 31435/26)] — <o que é: "HBL original", "commercial invoice final"> (<arquivo>) — de <empresa remetente>[ — referência agora: <referência>]
 
 DOCUMENTOS SEM PROCESSO (N) — chegaram documentos de embarques que não existem no sistema
 • <hh:mm> — <identificadores> — <o que é> — de <empresa remetente>

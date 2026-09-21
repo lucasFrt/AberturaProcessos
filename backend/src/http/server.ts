@@ -8,6 +8,7 @@ import { closeSharedRedisClient } from '@/infra/queue/connection';
 import { SocketIoProvider } from '@/infra/realtime/socket-io-provider';
 import { JwtTokenService } from '@/infra/security/token-service';
 import { ensureStorageRootExists } from '@/infra/storage/local-disk-storage';
+import { IlogSyncJob } from '@/jobs/ilog-sync-job';
 import { AccessScopeResolver } from '@/services/access-scope-resolver';
 
 const app = createApp(prisma);
@@ -15,6 +16,7 @@ const container = app.get('container') as Container;
 
 let server: ReturnType<typeof app.listen>;
 let realtimeProvider: SocketIoProvider | undefined;
+let ilogSyncJob: IlogSyncJob | undefined;
 
 // STORAGE_ROOT criado de forma idempotente na subida (docs/10, RNF-11) —
 // nunca falha silenciosamente: se não for gravável, a Promise rejeita e o
@@ -38,6 +40,15 @@ void (async (): Promise<void> => {
     accessScopeResolver: new AccessScopeResolver(userRepositoryForSockets),
   });
   container.realtimeProvider.attach(realtimeProvider);
+
+  // Espelho do iLog (docs/15): agendado aqui, depois do tempo real anexado,
+  // para o board receber os processos espelhados sem recarregar.
+  if (container.ilogSyncService) {
+    ilogSyncJob = new IlogSyncJob(container.ilogSyncService, logger, {
+      intervalMinutes: env.ILOG_SYNC_INTERVAL_MINUTES,
+    });
+    ilogSyncJob.start();
+  }
 })();
 
 /**
@@ -50,6 +61,7 @@ void (async (): Promise<void> => {
 async function shutdown(signal: string): Promise<void> {
   logger.info({ signal }, 'Encerrando');
 
+  ilogSyncJob?.stop();
   if (realtimeProvider) {
     await realtimeProvider.close();
   }
@@ -57,6 +69,7 @@ async function shutdown(signal: string): Promise<void> {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
   await container.queueProvider.close();
+  await container.shutdown();
   await closeSharedRedisClient();
   await prisma.$disconnect();
 

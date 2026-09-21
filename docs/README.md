@@ -28,7 +28,7 @@ AberturaProcessos/
 | [09-padroes-de-codigo-e-testes.md](./09-padroes-de-codigo-e-testes.md) | SOLID aplicado, convenções, estratégia de testes |
 | [10-ambiente-e-configuracao.md](./10-ambiente-e-configuracao.md) | Variáveis de ambiente, docker-compose, setup local |
 | [11-deploy-windows-server.md](./11-deploy-windows-server.md) | Windows Server 2022 + IIS + NSSM + SQL Server |
-| [15-ilog-fonte-da-verdade.md](./15-ilog-fonte-da-verdade.md) | Estudo (21/09/2026): o iLog como fonte da verdade dos processos — dados medidos, opções, recomendação (espelho incremental + índice de identificadores) e plano da Tarefa 30 |
+| [15-ilog-fonte-da-verdade.md](./15-ilog-fonte-da-verdade.md) | O iLog como fonte da verdade dos processos: estudo (dados medidos, opções, recomendação), desenho do espelho incremental + índice de identificadores, plano da Tarefa 30 e o que foi implementado (seção 7) |
 | [12-plano-de-tarefas.md](./12-plano-de-tarefas.md) | Tarefas incrementais (22 do núcleo + Fase 7 de alimentação por IA), cada uma com critério de aceite |
 | [13-integracao-ia-email.md](./13-integracao-ia-email.md) | Alimentação por IA: chaves de API, intake idempotente por e-mail, anexos via Microsoft Graph, MCP server |
 | [14-viabilidade-rotina-nuvem.md](./14-viabilidade-rotina-nuvem.md) | Estudo de viabilidade (18/09/2026): agente como rotina agendada na nuvem da Anthropic com Claude Max — condições, riscos, custo, próximos passos |

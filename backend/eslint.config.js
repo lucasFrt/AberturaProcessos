@@ -60,6 +60,10 @@ module.exports = tseslint.config(
               message: 'Services e domain não conhecem o Prisma. Use a interface de repositório.',
             },
             { name: 'express', message: 'Services não conhecem HTTP.' },
+            {
+              name: 'mysql2/promise',
+              message: 'Services e domain não conhecem o MySQL do iLog. Use IlogProcessSource.',
+            },
           ],
           patterns: [
             '@/infra/prisma/*',
@@ -69,6 +73,7 @@ module.exports = tseslint.config(
             '@/infra/realtime/*',
             '@/infra/cnpj/*',
             '@/infra/graph/*',
+            '@/infra/ilog/*',
           ],
         },
       ],

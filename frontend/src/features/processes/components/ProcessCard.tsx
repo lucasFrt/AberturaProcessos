@@ -66,6 +66,11 @@ export function ProcessCard({ process }: ProcessCardProps): ReactElement {
 
         <Flex gap={4} wrap>
           <Tag>{formatCompanyDocument(process.clientCompany.cnpj)}</Tag>
+          {process.ilogNumber && (
+            <Tooltip title="Número do processo no iLog">
+              <Tag color="purple">iLog {process.ilogNumber}</Tag>
+            </Tooltip>
+          )}
           {process.source === 'EMAIL' && (
             <Tooltip
               title={

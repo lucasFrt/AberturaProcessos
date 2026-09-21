@@ -5,6 +5,10 @@ com acesso somente leitura, para responder a duas perguntas: **ligar o intake ao
 opção?** e, se for, **como fazer isso da forma mais eficiente?** Números abaixo foram medidos no
 banco real nessa data.
 
+> **Estado (22/09/2026):** as entregas 30a e 30b da seção 6 estão implementadas (docs/12,
+> Tarefa 30). A seção 7 registra o que foi feito e onde a implementação desviou do desenho da
+> seção 5 — a seção 5 fica como foi aprovada, para comparação.
+
 ## 1. O problema que motiva o estudo
 
 Depois de duas execuções reais da rotina (docs/13, decisões 9 a 12), o gargalo do intake ficou
@@ -232,3 +236,63 @@ mercadorias/valores — nada disso é necessário para o intake acertar o proces
 Pré-requisitos: usuário MySQL **somente leitura** para o servidor da API (com `SELECT` em `ilog` e
 `ilogcore`), conectividade do Windows Server com o IP privado do MySQL, e as variáveis `ILOG_*` no
 `.env`.
+
+## 7. O que foi implementado (30a + 30b) e os desvios do desenho
+
+Código: `domain/entities/process-identifier.ts` (normalização, classificação por formato,
+extração de candidatos de uma referência livre), `domain/ilog/ilog-process-source.ts` (interface),
+`infra/ilog/mysql-ilog-process-source.ts` (mysql2), `services/ilog-sync-service.ts`,
+`jobs/ilog-sync-job.ts`, `infra/prisma/repositories/prisma-process-identifier-repository.ts` e
+`prisma-ilog-sync-state-repository.ts`, migrations `20260922100000_add_ilog_mirror` e
+`20260922100100_add_check_constraints_ilog_mirror`. Contratos em docs/04, docs/05 e docs/10.
+
+Desvios (todos deliberados):
+
+- **Backfill só dos processos em aberto abertos nos últimos `ILOG_BACKFILL_DAYS` dias (padrão
+  90)**, não "todos os abertos + encerrados de 90 dias". Dos 682 abertos em 21/09, 373 foram
+  abertos em jul–set; os ~300 restantes são de 2024–2025 e nunca foram encerrados no iLog — no
+  funil seriam ruído. Eles entram quando forem alterados no iLog ou quando um e-mail citar um
+  identificador deles (retaguarda). Processos já encerrados/cancelados que apareçam no incremental
+  e ainda não existam aqui **não são criados**; os que já existem só são atualizados (etapa fica
+  para a 30c).
+- **Retaguarda B implícita, não um endpoint `GET /intake/ilog/lookup`**: `lookup` e `attach` do
+  intake consultam o iLog sozinhos quando o índice não tem o identificador (só para `ref` com
+  dígito e ≥ 4 caracteres normalizados; nome de empresa nunca vai ao iLog). Menos uma ferramenta e
+  menos uma decisão para o agente; o custo é uma consulta MySQL por identificador desconhecido
+  (colunas indexadas, `LIMIT`, `max_execution_time`). Falha do iLog vira `lastError`, não erro.
+- **O job roda no processo da API, não no worker.** O `RealtimeProvider` (Socket.IO) só existe
+  no processo da API; no worker o board não receberia `process:created` dos espelhados. É um
+  `setInterval` com `unref`, atraso inicial de 15 s, e o service rejeita ciclos sobrepostos.
+- **Cursor do `changelog` guardado como texto no formato do MySQL** (`IlogSyncState.lastChangelogAt`,
+  `NVARCHAR(30)`), devolvido tal qual na próxima consulta — nenhuma conversão de fuso em nenhum
+  lado. As DATETIME do processo (`dt_ab_pro`…) são convertidas com o fuso fixo de Brasília
+  (`-03:00`, sem horário de verão desde 2019) no provider, não pelo fuso do Node. O incremental
+  também lê `processofatura` e `procequipamento` (identificadores nas filhas) e o cursor só
+  avança até o menor "máximo" das consultas que bateram no `ILOG_CHANGELOG_LIMIT`.
+- **Referência do processo espelhado** = `ident_cli_pro` + HBL (quando diferente), ou o número
+  da Opus; o número fica em `ilogNumber` (tag "iLog 31435/26" no card e busca por `q`). A
+  referência de um processo aberto por e-mail é do agente e **não** é sobrescrita ao vincular.
+- **Vínculo** exige mesma empresa (`ilogCompanyId` ou CNPJ) **ou** empresa em cadastro pendente;
+  identificador igual em empresa com CNPJ diferente é colisão e o processo do iLog é espelhado à
+  parte (aviso no log). Ao vincular com empresa pendente, o cadastro é concluído com razão social,
+  nome fantasia, CNPJ e `ilogCompanyId` do iLog. Um cadastro pendente também é concluído por nome
+  (normalizado, sem sufixos societários) ou por domínio de contato já registrado na organização.
+- **Domínios de contato** viram `EmailDomain` só quando exclusivos de uma empresa no iLog
+  (`listSharedContactDomains` lê `empcontato` inteira — 527 linhas — uma vez por execução),
+  corporativos e ainda desconhecidos aqui; `autoApprove = false`.
+- **Índice também para WEB/API**: toda criação/edição de `reference` (formulário, chave de API)
+  alimenta o índice com `source = MANUAL`; `identifiers`/`addReferences` do intake, com `EMAIL`; o
+  espelho regrava os `ILOG` a cada leitura (e "promove" para `ILOG` o que o e-mail já tinha e o
+  iLog confirma). Os `kind` são só orientação — o casamento é pelo valor normalizado, sem
+  distinção de tipo; a unicidade é `(processId, kind, normalized)`.
+- **Um processo por BL no servidor**: `POST /intake/processes` com identificador já existente na
+  mesma empresa vira complemento (`event.kind = ATTACHMENT`), mesmo que o agente tenha errado a
+  classificação.
+
+Quem assina as escritas do espelho (`createdBy`, histórico): `ILOG_SYNC_ACTOR_EMAIL`, ou o
+primeiro ADMIN ativo. Vale criar um usuário interno "Espelho iLog" para isso ficar legível na
+timeline.
+
+Fica para a 30c: listagem/proxy dos arquivos do `ifilesystem` no processo (exige `SELECT` em
+`ilogcore`), mapeamento de etapas (`CanceladoData`/`dt_enc_pro`/`dt_reg_di_pro`) e um painel do
+estado do sync (`IlogSyncState`) na tela "Intake IA".
