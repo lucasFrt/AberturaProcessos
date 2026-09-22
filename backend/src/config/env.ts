@@ -8,6 +8,24 @@ dotenv.config();
  * (`Boolean('false') === true` em JS) — ou seja, `COOKIE_SECURE=false` no
  * `.env` seria lido como `true`. Esse schema interpreta o texto de fato.
  */
+/**
+ * Variável opcional com formato validado (e-mail, URL...). `VAR=` no `.env`
+ * chega como string **vazia**, não como ausente: sem isto o formato falharia
+ * e a API não subiria por uma variável que o próprio `.env.example` deixa em
+ * branco para dizer "não definida" (docs/10).
+ */
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- mesmo motivo do `booleanFromEnv`
+function optionalFromEnv<T extends z.ZodType<string, string>>(schema: T) {
+  return z
+    .string()
+    .optional()
+    .transform((value) => {
+      const trimmed = value?.trim() ?? '';
+      return trimmed.length === 0 ? undefined : trimmed;
+    })
+    .pipe(schema.optional());
+}
+
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- retorno inferido: o tipo exato do schema Zod (ZodEffects em v3, diferente em v4) não vale a pena fixar aqui
 function booleanFromEnv(defaultValue: boolean) {
   return z
@@ -167,7 +185,7 @@ export const envSchema = z.object({
   /** Máximo de processos alterados lidos por ciclo (proteção após muito tempo parado). */
   ILOG_CHANGELOG_LIMIT: z.coerce.number().int().positive().default(2_000),
   /** E-mail do usuário que assina as escritas do espelho; vazio = primeiro ADMIN ativo. */
-  ILOG_SYNC_ACTOR_EMAIL: z.string().email().optional(),
+  ILOG_SYNC_ACTOR_EMAIL: optionalFromEnv(z.string().email()),
 });
 
 const refinedEnvSchema = envSchema.superRefine((data, ctx) => {
