@@ -53,12 +53,20 @@ try {
     $instance = if ($dbUrl -match 'instanceName=([^;]+)') { "localhost\$($Matches[1])" } else { 'localhost' }
     $sqlcmd = Get-Command sqlcmd -ErrorAction SilentlyContinue
     if ($dbName -and $sqlcmd) {
-      $backupDir = Join-Path (Split-Path -Parent (($envFile | Where-Object { $_ -match '^\s*STORAGE_ROOT\s*=' } | Select-Object -Last 1) -replace '^\s*STORAGE_ROOT\s*=\s*', '').Trim('"')) 'backup'
-      New-Item -ItemType Directory -Force $backupDir | Out-Null
+      $storageRoot = (($envFile | Where-Object { $_ -match '^\s*STORAGE_ROOT\s*=' } | Select-Object -Last 1) -replace '^\s*STORAGE_ROOT\s*=\s*', '').Trim('"')
+      # STORAGE_ROOT costuma ser relativo ao backend (".\storage\uploads"). O sqlcmd
+      # entrega o caminho ao SQL Server, que resolve relativo à pasta de backup DELE
+      # ("...\MSSQL\Backup\storage\..." -> erro 3201). Por isso vai absoluto daqui.
+      $backupDir = Join-Path (Split-Path -Parent $storageRoot) 'backup'
+      $backupDir = (New-Item -ItemType Directory -Force $backupDir).FullName
       $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
       $file = Join-Path $backupDir "pre-deploy-$stamp.bak"
       Write-Step "Backup do banco $dbName em $file"
       & sqlcmd -S $instance -E -Q "BACKUP DATABASE [$dbName] TO DISK='$file'"
+      # Migration não tem rollback automático (docs/11): sem backup, não segue.
+      if ($LASTEXITCODE -ne 0) {
+        throw "Backup de $dbName falhou (mensagem do sqlcmd acima). Causa comum: a conta do servico do SQL Server nao tem escrita em $backupDir - libere com: icacls `"$backupDir`" /grant `"NT SERVICE\MSSQL`$SQLEXPRESS`":(OI)(CI)M. Ou rode com -SkipBackup se for intencional."
+      }
     } else {
       Write-Warning 'Backup pulado: sqlcmd não encontrado ou DATABASE_URL sem database=. Use -SkipBackup para silenciar.'
     }
