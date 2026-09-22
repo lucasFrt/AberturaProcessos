@@ -237,6 +237,12 @@ Pré-requisitos: usuário MySQL **somente leitura** para o servidor da API (com 
 `ilogcore`), conectividade do Windows Server com o IP privado do MySQL, e as variáveis `ILOG_*` no
 `.env`.
 
+> **Feito (22/09/2026):** o usuário fornecido já é somente leitura — `GRANT SELECT ON *.*`, sem
+> nenhuma permissão de escrita, e sem restrição de host (`@'%'`), então o Windows Server pode usar
+> o mesmo. O `SELECT` global cobre `ilogcore` (arquivos da fase 30c) sem pedir nada novo.
+> Verificado com `SHOW GRANTS FOR CURRENT_USER()`. Resta a conectividade e as variáveis `ILOG_*`
+> no `.env` do servidor.
+
 ## 7. O que foi implementado (30a + 30b) e os desvios do desenho
 
 Código: `domain/entities/process-identifier.ts` (normalização, classificação por formato,

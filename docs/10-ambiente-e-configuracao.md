@@ -234,9 +234,11 @@ Sobre as variáveis `GRAPH_*` (docs/13, seção "Configuração"):
 Sobre as variáveis `ILOG_*` (docs/15, seções 5.2 e 5.3):
 
 - **Usuário MySQL somente leitura**, com `SELECT` nos bancos `ilog` (e, na fase seguinte,
-  `ilogcore` para os arquivos). A API ainda abre toda sessão com
-  `SET SESSION TRANSACTION READ ONLY` e `max_execution_time = ILOG_MYSQL_TIMEOUT_MS` — o espelho
-  nunca escreve no iLog, mesmo que o usuário tenha mais permissão do que deveria.
+  `ilogcore` para os arquivos). O usuário em uso (22/09/2026) tem `GRANT SELECT ON *.*` e nenhuma
+  permissão de escrita, sem restrição de host — serve ao servidor da API como está. A API ainda
+  abre toda sessão com `SET SESSION TRANSACTION READ ONLY` e
+  `max_execution_time = ILOG_MYSQL_TIMEOUT_MS` — o espelho nunca escreve no iLog, mesmo que o
+  usuário um dia ganhe mais permissão do que deveria.
 - Com `ILOG_SYNC_ENABLED=true`, `ILOG_MYSQL_HOST`, `ILOG_MYSQL_USER` e `ILOG_MYSQL_PASSWORD` passam a
   ser obrigatórias e a API aborta a subida se faltar alguma. O Windows Server precisa alcançar o
   IP privado do MySQL (firewall/rota) — testar com `Test-NetConnection <host> -Port 3306` antes.

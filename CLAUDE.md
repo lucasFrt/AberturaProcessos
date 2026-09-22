@@ -289,8 +289,9 @@ origem/solicitante/CPF, intake idempotente por e-mail com anexos via Graph, MCP 
 cursor gravado e empresa pelo domínio/cadastro pendente, caixa lida pelo servidor e documentos de
 qualquer parceiro, pasta por organização + tela "Intake IA", e o espelho do iLog com índice de
 identificadores — Tarefa 30a/30b, docs/15) estão concluídas. Falta a 30c (arquivos do
-`ifilesystem` no processo, mapeamento de etapas) e, fora do repositório, o usuário MySQL somente
-leitura + conectividade do Windows Server com o iLog e as variáveis `ILOG_*` no `.env` do servidor.
+`ifilesystem` no processo, mapeamento de etapas) e, fora do repositório, a conectividade do
+Windows Server com o IP privado do MySQL do iLog e as variáveis `ILOG_*` no `.env` do servidor
+(o usuário do banco já é somente leitura, `SELECT` global, sem restrição de host).
 A API está publicada em `https://processos.opusce.com.br` (Windows Server, docs/11, scripts em
 `deploy/`), o app do Entra ID tem RBAC for Applications `Application Mail.Read` restrito à caixa
 `opusoperacional@opusce.com.br` (docs/13, "Configuração"), e a rotina agendada do Claude Code
