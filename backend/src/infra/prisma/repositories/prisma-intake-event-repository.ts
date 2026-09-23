@@ -133,6 +133,21 @@ export class PrismaIntakeEventRepository implements IntakeEventRepository {
     return row ? toDomain(row) : null;
   }
 
+  async findByMessages(
+    channel: IntakeChannel,
+    externalIds: readonly string[],
+    internetMessageIds: readonly string[],
+  ): Promise<IntakeEvent[]> {
+    const or: Prisma.IntakeEventWhereInput[] = [];
+    if (externalIds.length > 0) or.push({ externalId: { in: [...externalIds] } });
+    if (internetMessageIds.length > 0) {
+      or.push({ internetMessageId: { in: [...internetMessageIds] } });
+    }
+    if (or.length === 0) return [];
+    const rows = await this.prisma.intakeEvent.findMany({ where: { channel, OR: or } });
+    return rows.map(toDomain);
+  }
+
   async update(id: string, data: UpdateIntakeEventData): Promise<IntakeEvent> {
     const updateData: Prisma.IntakeEventUpdateInput = {
       ...(data.externalId !== undefined ? { externalId: data.externalId } : {}),

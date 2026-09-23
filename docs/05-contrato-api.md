@@ -666,29 +666,38 @@ evento passa a refletir a tentativa atual (`kind`, `externalId`).
 ### `GET /intake/processes/lookup`
 
 Candidatos para o agente conferir antes de decidir entre abrir e complementar. Query: `ref`
-(código, referência ou **um** identificador do embarque), `companyDocument` (filtra pelo CNPJ/CPF
-cliente), `limit` (padrão 5, máx. 20). Exige `ref` ou `companyDocument`.
+(código, referência ou identificador do embarque — **repetível**, até 10:
+`?ref=31435/26&ref=DANGB26080406&ref=MSKU1234567`, do mais específico para o menos),
+`companyDocument` (filtra pelo CNPJ/CPF cliente), `limit` (padrão 5, máx. 20). Exige `ref` ou
+`companyDocument`.
 
 ```json
-{ "matches": [ { "matchedBy": "CODE", "process": { "...": "item de listagem" } }, { "matchedBy": "HBL", "process": { "...": "" } }, { "matchedBy": "PARTIAL", "process": { "...": "" } } ] }
+{ "matches": [ { "matchedBy": "HBL", "ref": "DANGB26080406", "process": { "...": "item de listagem" } }, { "matchedBy": "PARTIAL", "ref": "DANGB26080406", "process": { "...": "" } } ] }
 ```
 
 `matchedBy`: `CODE` (código exato), `REFERENCE` (referência exata), um `kind` do índice de
 identificadores (`OPUS_NUMBER`, `CLIENT_REF`, `HBL`, `MBL`, `CONTAINER`, `INVOICE`, `DI`, `CE`,
-`DTA`, `OTHER` — casamento exato pelo valor normalizado; docs/15) ou `PARTIAL` (contém). Ordem:
-exatos, índice, parciais. Quando o índice não tem o identificador e `ILOG_SYNC_ENABLED=true`, o
-servidor consulta o iLog **uma vez** (só para `ref` com cara de identificador: pelo menos um
-dígito e 4 caracteres normalizados) e espelha o processo encontrado antes de responder — a
-retaguarda B do docs/15. Falha do iLog não falha o lookup: fica registrada em
-`IlogSyncState.lastError` e a resposta segue sem ele.
+`DTA`, `OTHER` — casamento exato pelo valor normalizado; docs/15) ou `PARTIAL` (contém). `ref` diz
+qual dos `ref` informados trouxe o candidato (`null` na busca só por `companyDocument`).
+
+Com vários `ref`, vale o **primeiro que casar exato** (código, referência ou índice), na ordem
+informada; os seguintes nem são consultados. Se nenhum casar no índice local e
+`ILOG_SYNC_ENABLED=true`, o servidor consulta o iLog na mesma ordem, **um `ref` por vez, parando
+no primeiro que achar** (só `ref` com cara de identificador: pelo menos um dígito e 4 caracteres
+normalizados), e espelha o processo encontrado antes de responder — a retaguarda B do docs/15. O
+índice vem antes do iLog para não consultar o iLog pelo número da Opus quando o HBL já está
+aqui. Parciais completam a lista até `limit`: do `ref` que casou, ou de todos quando nenhum casou.
+Falha do iLog não falha o lookup: fica registrada em `IlogSyncState.lastError` e a resposta segue
+sem ele.
 
 ### `GET /intake/events`
 
 Eventos de intake, mais recentes primeiro. Filtros: `externalId`, `internetMessageId`, `kind`
 (`PROCESS | ATTACHMENT | IGNORED | ESCALATED`), `status` (`PROCESSING | COMPLETED | FAILED`),
-`processId`, paginação padrão. Serve para o agente checar se uma mensagem já foi processada
-(`externalId`) antes de gastar trabalho, listar retentativas pendentes (`status=FAILED`), e para o
-operacional auditar o que a IA fez (`kind=ESCALATED` = o que ficou para uma pessoa).
+`processId`, paginação padrão. Serve para listar retentativas pendentes (`status=FAILED`), para o
+operacional auditar o que a IA fez (`kind=ESCALATED` = o que ficou para uma pessoa) e para checar
+uma mensagem avulsa (`externalId`) — na leitura da caixa isso não é preciso: a listagem
+(`GET /intake/mailbox/messages`) já traz o evento de cada mensagem.
 
 ### `GET /intake/mailbox/messages`
 
@@ -699,15 +708,18 @@ ou nome — contenha um deles são descartados no servidor, sem diferenciar mai�
 
 ```json
 {
-  "messages": [ { "id": "AAMkAGI2...", "internetMessageId": "<abc@x.com>", "subject": "Novo Processo - 230/26", "from": { "name": "Gabriel | Casa & Novidade", "email": "importacao@casaenovidade.com.br" }, "receivedAt": "2026-09-21T15:33:40.000Z", "hasAttachments": true, "preview": "Boa tarde, Segue em anexo os documentos do processo: 230/26" } ],
+  "messages": [ { "id": "AAMkAGI2...", "internetMessageId": "<abc@x.com>", "subject": "Novo Processo - 230/26", "from": { "name": "Gabriel | Casa & Novidade", "email": "importacao@casaenovidade.com.br" }, "receivedAt": "2026-09-21T15:33:40.000Z", "hasAttachments": true, "preview": "Boa tarde, Segue em anexo os documentos do processo: 230/26", "intake": null },
+    { "id": "AAMkAGI3...", "internetMessageId": "<def@x.com>", "subject": "RES: Recebido", "from": { "name": "Ana", "email": "ana@agente.com" }, "receivedAt": "2026-09-21T15:40:02.000Z", "hasAttachments": false, "preview": "Recebido, obrigada.", "intake": { "eventId": "cie4", "status": "COMPLETED", "kind": "IGNORED", "processId": null } } ],
   "listed": 50, "blocked": 41, "nextAfter": "2026-09-21T16:05:12.000Z", "hasMore": true
 }
 ```
 
 `listed` é quantas o Graph devolveu; `blocked` quantas o filtro descartou; `nextAfter` é o
 `receivedAt` da **última listada, bloqueada ou não** — é o valor a gravar em `PUT /intake/cursor` ao
-terminar a página; `hasMore` diz se há mais depois dela. Erros: `503 MAIL_READ_DISABLED`
-(`GRAPH_INTAKE_ENABLED=false`), `503 MAIL_UNAVAILABLE`.
+terminar a página; `hasMore` diz se há mais depois dela. `intake` é o `IntakeEvent` que a
+mensagem já tem (casado por `externalId` ou `internetMessageId`), ou `null` se o intake nunca a
+tratou — o agente pula `COMPLETED`/`PROCESSING` sem consultar `GET /intake/events` mensagem a
+mensagem. Erros: `503 MAIL_READ_DISABLED` (`GRAPH_INTAKE_ENABLED=false`), `503 MAIL_UNAVAILABLE`.
 
 ### `GET /intake/mailbox/messages/:id`
 
@@ -776,6 +788,33 @@ cursor passa por eles.
 
 Um e-mail pulado pode ser processado depois (`POST /intake/processes` ou `/attachments` com o mesmo
 `externalId`): o evento é reaberto como `PROCESS`/`ATTACHMENT`, não duplicado.
+
+### `POST /intake/events/skip-batch`
+
+Os descartes de uma página numa chamada só (docs/13, decisão 9): o agente decide um e-mail por
+vez e registra os `IGNORED`/`ESCALATED` da página juntos, antes de gravar o cursor.
+
+```json
+{ "items": [ { "source": { "...": "" }, "requester": null, "outcome": "IGNORED", "reason": "Confirmação de recebimento." } ] }
+```
+
+Cada item tem exatamente o formato de `POST /intake/events/skip` (1 a 100 itens) e é processado
+por ele, em ordem, com as mesmas regras. Item inválido → `400` para o lote inteiro, nada gravado.
+Erro de um item (ex.: `INTAKE_IN_PROGRESS`) não impede os outros: vira o resultado daquele item.
+`200`:
+
+```json
+{
+  "recorded": 1, "duplicates": 1, "failed": 1,
+  "results": [
+    { "externalId": "AAMkAGI3...", "ok": true, "duplicate": false, "event": { "...": "IntakeEvent" } },
+    { "externalId": "AAMkAGI4...", "ok": true, "duplicate": true, "event": { "...": "" } },
+    { "externalId": "AAMkAGI5...", "ok": false, "error": { "code": "INTAKE_IN_PROGRESS", "message": "..." } }
+  ]
+}
+```
+
+Repetir o lote é seguro (o skip é idempotente): os já registrados voltam como `duplicate: true`.
 
 ## Dashboard (ADMIN)
 

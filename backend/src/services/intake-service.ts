@@ -163,8 +163,24 @@ export interface ListMailboxInput {
   excludeSenders: string[];
 }
 
+/**
+ * O que o intake já fez com uma mensagem listada (docs/13, decisão 9) — a
+ * rotina decide pela listagem o que pular, sem consultar evento por evento.
+ */
+export interface MailboxIntakeStatus {
+  eventId: string;
+  status: IntakeEvent['status'];
+  kind: IntakeEvent['kind'];
+  processId: string | null;
+}
+
+export interface MailboxListItem extends MailboxMessageSummary {
+  /** `null` = nunca tratada pelo intake. */
+  intake: MailboxIntakeStatus | null;
+}
+
 export interface ListMailboxResult {
-  messages: MailboxMessageSummary[];
+  messages: MailboxListItem[];
   /** Quantas o provedor devolveu, antes do filtro de remetentes. */
   listed: number;
   blocked: number;
@@ -205,6 +221,14 @@ export interface SkipIntakeResult {
   duplicate: boolean;
 }
 
+/**
+ * Um item do descarte em lote: cada mensagem tem o próprio desfecho, e a
+ * falha de uma (ex.: `INTAKE_IN_PROGRESS`) não impede as outras.
+ */
+export type SkipBatchItemResult =
+  | ({ externalId: string; ok: true } & SkipIntakeResult)
+  | { externalId: string; ok: false; error: { code: string; message: string } };
+
 /** Ponto de onde a próxima execução do agente continua a leitura (docs/13, decisão 9). */
 export interface IntakeCursor {
   channel: IntakeChannel;
@@ -237,10 +261,16 @@ export type ProcessMatchKind = 'CODE' | 'REFERENCE' | ProcessIdentifierKind | 'P
 export interface ProcessMatch {
   process: ProcessListItem;
   matchedBy: ProcessMatchKind;
+  /** Qual dos `refs` casou; `null` na busca só por empresa. */
+  ref: string | null;
 }
 
 export interface LookupProcessQuery {
-  ref?: string | undefined;
+  /**
+   * Código, referência ou identificadores do embarque, do mais específico
+   * para o menos — vários numa chamada só, em vez de uma por identificador.
+   */
+  refs?: readonly string[] | undefined;
   companyDocument?: string | undefined;
   limit: number;
 }
@@ -526,41 +556,66 @@ export class IntakeService {
 
   /**
    * Candidatos para o agente conferir antes de decidir entre abrir e
-   * complementar (docs/13, decisão 6). Exatos primeiro (código, depois
-   * referência), depois parciais; opcionalmente restritos ao documento da
-   * empresa.
+   * complementar (docs/13, decisão 6). `refs` vêm do mais específico para
+   * o menos; vale o primeiro que casar exato (código, referência ou índice
+   * de identificadores). O iLog só é consultado se nenhum casar no índice
+   * local — na mesma ordem, parando no primeiro que achar —, para não ir
+   * ao iLog pelo número da Opus quando o HBL já está aqui. Parciais
+   * completam a lista: do ref que casou, ou de todos se nenhum casou.
+   * Opcionalmente restritos ao documento da empresa.
    */
   async lookupProcess(query: LookupProcessQuery): Promise<ProcessMatch[]> {
-    const ref = query.ref?.trim();
+    const refs = [
+      ...new Set((query.refs ?? []).map((ref) => ref.trim()).filter((ref) => ref.length > 0)),
+    ];
     const companyDigits = query.companyDocument ? normalizeCnpjDigits(query.companyDocument) : null;
     const matches: ProcessMatch[] = [];
     const seen = new Set<string>();
 
-    const push = (item: ProcessListItem, matchedBy: ProcessMatchKind): void => {
+    const push = (item: ProcessListItem, matchedBy: ProcessMatchKind, ref: string | null): void => {
       if (seen.has(item.id)) return;
       if (companyDigits && item.clientCompany.cnpj !== companyDigits) return;
       seen.add(item.id);
-      matches.push({ process: item, matchedBy });
+      matches.push({ process: item, matchedBy, ref });
     };
 
-    if (ref) {
-      const exact = await this.deps.processRepository.findExactByRef(ref);
-      for (const item of exact) {
-        push(item, item.code.toUpperCase() === ref.toUpperCase() ? 'CODE' : 'REFERENCE');
+    if (refs.length > 0) {
+      let matchedRef: string | null = null;
+      for (const ref of refs) {
+        const before = matches.length;
+        for (const item of await this.deps.processRepository.findExactByRef(ref)) {
+          push(item, item.code.toUpperCase() === ref.toUpperCase() ? 'CODE' : 'REFERENCE', ref);
+        }
+        for (const match of await this.matchByIdentifier(ref, false)) {
+          push(match.process, match.kind, ref);
+        }
+        if (matches.length > before) {
+          matchedRef = ref;
+          break;
+        }
       }
-      // Índice de identificadores (docs/15): exato por normalizado, com o
-      // `kind` casado; se o índice não tem, o iLog é consultado uma vez.
-      for (const match of await this.matchByIdentifier(ref, true)) {
-        push(match.process, match.kind);
+      // Retaguarda B do docs/15: um identificador por vez, até o iLog achar.
+      if (matchedRef === null && this.deps.ilogSyncService) {
+        for (const ref of refs) {
+          const before = matches.length;
+          for (const match of await this.matchByIdentifier(ref, true)) {
+            push(match.process, match.kind, ref);
+          }
+          if (matches.length > before) {
+            matchedRef = ref;
+            break;
+          }
+        }
       }
-      if (matches.length < query.limit) {
+      for (const ref of matchedRef === null ? refs : [matchedRef]) {
+        if (matches.length >= query.limit) break;
         const partial = await this.deps.processRepository.list(
           { q: ref },
           ALL,
           { page: 1, pageSize: query.limit },
           { field: 'createdAt', order: 'desc' },
         );
-        for (const item of partial.items) push(item, 'PARTIAL');
+        for (const item of partial.items) push(item, 'PARTIAL', ref);
       }
     } else if (companyDigits) {
       const company = await this.deps.companyRepository.findByCnpj(companyDigits);
@@ -571,7 +626,7 @@ export class IntakeService {
           { page: 1, pageSize: query.limit },
           { field: 'createdAt', order: 'desc' },
         );
-        for (const item of page.items) push(item, 'PARTIAL');
+        for (const item of page.items) push(item, 'PARTIAL', null);
       }
     }
 
@@ -589,7 +644,9 @@ export class IntakeService {
    * Caixa de entrada desde `after`, já sem os remetentes bloqueados (docs/13,
    * decisão 9). `nextAfter` é o `receivedAt` da última mensagem que o
    * provedor devolveu — bloqueada ou não — porque o cursor tem de passar
-   * também pelo que foi descartado.
+   * também pelo que foi descartado. Cada mensagem vem com o evento de intake
+   * que já tiver (por `externalId` ou `internetMessageId`): a rotina pula o
+   * que já foi tratado sem uma consulta por e-mail.
    */
   async listMailbox(input: ListMailboxInput): Promise<ListMailboxResult> {
     const reader = this.requireMailboxReader();
@@ -599,9 +656,42 @@ export class IntakeService {
     }
     const terms = input.excludeSenders.map((term) => term.trim().toLowerCase());
     const kept = outcome.messages.filter((message) => !senderMatches(message.from, terms));
+    const events =
+      kept.length === 0
+        ? []
+        : await this.deps.intakeEventRepository.findByMessages(
+            'EMAIL',
+            kept.map((message) => message.id),
+            kept.flatMap((message) =>
+              message.internetMessageId ? [message.internetMessageId] : [],
+            ),
+          );
+    const byExternalId = new Map(events.map((event) => [event.externalId, event]));
+    const byInternetMessageId = new Map(
+      events.flatMap((event) =>
+        event.internetMessageId ? [[event.internetMessageId, event] as const] : [],
+      ),
+    );
     const last = outcome.messages[outcome.messages.length - 1];
     return {
-      messages: kept,
+      messages: kept.map((message) => {
+        const event =
+          byExternalId.get(message.id) ??
+          (message.internetMessageId
+            ? byInternetMessageId.get(message.internetMessageId)
+            : undefined);
+        return {
+          ...message,
+          intake: event
+            ? {
+                eventId: event.id,
+                status: event.status,
+                kind: event.kind,
+                processId: event.processId,
+              }
+            : null,
+        };
+      }),
       listed: outcome.messages.length,
       blocked: outcome.messages.length - kept.length,
       nextAfter: last ? last.receivedAt : null,
@@ -703,6 +793,35 @@ export class IntakeService {
       },
     });
     return { event, duplicate: false };
+  }
+
+  /**
+   * Descarte em lote (docs/13, decisão 9): a rotina decide um e-mail por
+   * vez, mas registra os descartes da página numa chamada só. Cada item é
+   * um `skipEmail` independente, em ordem; erro de domínio de um item (ex.:
+   * `INTAKE_IN_PROGRESS`) vira o resultado daquele item, sem derrubar os
+   * outros. Erro inesperado (banco fora) propaga — repetir o lote é seguro,
+   * porque o skip é idempotente.
+   */
+  async skipEmails(
+    actorId: string,
+    inputs: readonly SkipIntakeInput[],
+  ): Promise<SkipBatchItemResult[]> {
+    const results: SkipBatchItemResult[] = [];
+    for (const input of inputs) {
+      const externalId = input.source.externalId;
+      try {
+        results.push({ externalId, ok: true, ...(await this.skipEmail(actorId, input)) });
+      } catch (error) {
+        if (!(error instanceof AppError)) throw error;
+        results.push({
+          externalId,
+          ok: false,
+          error: { code: error.code, message: error.message },
+        });
+      }
+    }
+    return results;
   }
 
   /**

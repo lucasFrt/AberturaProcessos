@@ -131,8 +131,10 @@ container.ts  composição manual de dependências (ver acima)
   `after`, remetentes de `exclude` descartados no servidor (a lista mora no prompt), corpo em
   texto sem histórico citado. A rotina grava `PUT /intake/cursor` com o `nextAfter` de cada página
   (ponteiro por canal em `intake_cursors`, só anda para a frente). O que a IA leu e não processou
-  vira `IntakeEvent` `IGNORED`/`ESCALATED` via `POST /intake/events/skip`, com o motivo (docs/13,
-  decisão 9). A retentativa de `FAILED` é pela lista `status=FAILED`, não pelo cursor. Nada de
+  vira `IntakeEvent` `IGNORED`/`ESCALATED` via `POST /intake/events/skip` (ou, a página inteira,
+  `/events/skip-batch`), com o motivo (docs/13, decisão 9). A listagem já traz o evento de cada
+  mensagem (`intake`) e o `lookup` aceita `ref` repetido — é o que mantém a rotina em 2–3 chamadas
+  por e-mail (prompt v10); não reintroduzir consulta por e-mail nem paralelismo no prompt. A retentativa de `FAILED` é pela lista `status=FAILED`, não pelo cursor. Nada de
   pasta, regra ou categoria no Outlook — a caixa em uso não é tocada.
 - **Sem relatório por e-mail** (docs/13, decisão 12): o backend copia o e-mail processado para
   `Processos IA/<Organização>` na caixa (`MailboxOrganizer`, best-effort, exige
@@ -288,7 +290,8 @@ As 22 tarefas do núcleo e a Fase 7 (Tarefas 23–30, alimentação por IA — c
 origem/solicitante/CPF, intake idempotente por e-mail com anexos via Graph, MCP server + prompts,
 cursor gravado e empresa pelo domínio/cadastro pendente, caixa lida pelo servidor e documentos de
 qualquer parceiro, pasta por organização + tela "Intake IA", e o espelho do iLog com índice de
-identificadores — Tarefa 30a/30b, docs/15) estão concluídas. Falta a 30c (arquivos do
+identificadores — Tarefa 30a/30b, docs/15; e a Tarefa 31, rotina com menos chamadas por e-mail,
+prompt v10) estão concluídas. Falta a 30c (arquivos do
 `ifilesystem` no processo, mapeamento de etapas) e, fora do repositório, a conectividade do
 Windows Server com o IP privado do MySQL do iLog e as variáveis `ILOG_*` no `.env` do servidor
 (o usuário do banco já é somente leitura, `SELECT` global, sem restrição de host).

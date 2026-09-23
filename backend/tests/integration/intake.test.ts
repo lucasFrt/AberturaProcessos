@@ -12,6 +12,7 @@ import { truncateAll } from '../helpers/test-database';
 import { env } from '@/config/env';
 import { buildRateLimiters } from '@/http/middlewares/rate-limit';
 import { prisma } from '@/infra/prisma/client';
+import { PrismaIntakeEventRepository } from '@/infra/prisma/repositories/prisma-intake-event-repository';
 import { closeSharedRedisClient } from '@/infra/queue/connection';
 import { BcryptPasswordHasher } from '@/infra/security/password-hasher';
 
@@ -696,6 +697,41 @@ describe('Intake por e-mail — integração (docs/13)', () => {
 
       expect(response.status).toBe(400);
     });
+
+    it('lookup com ref repetido devolve o primeiro que casa, dizendo qual ref casou', async () => {
+      await prisma.company.create({
+        data: {
+          cnpj: VALID_CNPJ,
+          legalName: 'Cliente Teste LTDA',
+          organizationId: 'org-client-test',
+        },
+      });
+      const created = await request(app)
+        .post(`${INTAKE_BASE}/processes`)
+        .set('X-Api-Key', apiKey)
+        .send({ ...basePayload('msg-040'), identifiers: ['MSKU1234567'] });
+      const process = (created.body as IntakeResultBody).process;
+
+      const lookup = await request(app)
+        .get(`${INTAKE_BASE}/processes/lookup`)
+        .set('X-Api-Key', apiKey)
+        .query(`ref=NAO-EXISTE-1&ref=MSKU1234567&ref=${encodeURIComponent(process.code)}`);
+      expect(lookup.status).toBe(200);
+      const matches = (
+        lookup.body as {
+          matches: Array<{ matchedBy: string; ref: string | null; process: { id: string } }>;
+        }
+      ).matches;
+      expect(matches.map((m) => [m.process.id, m.matchedBy, m.ref])).toEqual([
+        [process.id, 'CONTAINER', 'MSKU1234567'],
+      ]);
+
+      const tooMany = await request(app)
+        .get(`${INTAKE_BASE}/processes/lookup`)
+        .set('X-Api-Key', apiKey)
+        .query(Array.from({ length: 11 }, (_, i) => `ref=R${i}`).join('&'));
+      expect(tooMany.status).toBe(400);
+    });
   });
 
   describe('POST /intake/events/skip e GET /intake/cursor (docs/13, decisão 9)', () => {
@@ -871,6 +907,76 @@ describe('Intake por e-mail — integração (docs/13)', () => {
         .set('X-Api-Key', apiKey)
         .query({ after: 'ontem' });
       expect(invalid.status).toBe(400);
+    });
+
+    it('skip-batch registra os descartes da página numa chamada; repetir é seguro', async () => {
+      const item = (
+        externalId: string,
+        outcome: 'IGNORED' | 'ESCALATED',
+        reason: string,
+        internetMessageId?: string,
+      ): Record<string, unknown> => ({
+        source: {
+          channel: 'EMAIL',
+          externalId,
+          ...(internetMessageId ? { internetMessageId } : {}),
+          subject: 'RES: Recebido',
+          receivedAt: '2026-09-21T12:00:00.000Z',
+        },
+        outcome,
+        reason,
+      });
+      const page = [
+        item('msg-batch-1', 'IGNORED', 'Confirmação de recebimento.'),
+        item('msg-batch-2', 'ESCALATED', 'vários embarques no mesmo e-mail', '<batch-2@x.com>'),
+      ];
+
+      const first = await request(app)
+        .post(`${INTAKE_BASE}/events/skip-batch`)
+        .set('X-Api-Key', apiKey)
+        .send({ items: page });
+      expect(first.status).toBe(200);
+      expect(first.body).toMatchObject({ recorded: 2, duplicates: 0, failed: 0 });
+
+      const again = await request(app)
+        .post(`${INTAKE_BASE}/events/skip-batch`)
+        .set('X-Api-Key', apiKey)
+        .send({ items: [...page, item('msg-batch-3', 'IGNORED', 'Agradecimento.')] });
+      expect(again.body).toMatchObject({ recorded: 1, duplicates: 2, failed: 0 });
+      const results = (
+        again.body as {
+          results: Array<{ externalId: string; ok: boolean; event: { kind: string } }>;
+        }
+      ).results;
+      expect(results.map((r) => [r.externalId, r.ok, r.event.kind])).toEqual([
+        ['msg-batch-1', true, 'IGNORED'],
+        ['msg-batch-2', true, 'ESCALATED'],
+        ['msg-batch-3', true, 'IGNORED'],
+      ]);
+
+      // É o que anota a listagem da caixa: casa por externalId ou por internetMessageId.
+      const repository = new PrismaIntakeEventRepository(prisma);
+      const events = await repository.findByMessages(
+        'EMAIL',
+        ['msg-batch-1', 'nunca-visto'],
+        ['<batch-2@x.com>'],
+      );
+      expect(events.map((event) => event.externalId).sort()).toEqual([
+        'msg-batch-1',
+        'msg-batch-2',
+      ]);
+      expect(await repository.findByMessages('EMAIL', [], [])).toEqual([]);
+
+      const empty = await request(app)
+        .post(`${INTAKE_BASE}/events/skip-batch`)
+        .set('X-Api-Key', apiKey)
+        .send({ items: [] });
+      expect(empty.status).toBe(400);
+      const noReason = await request(app)
+        .post(`${INTAKE_BASE}/events/skip-batch`)
+        .set('X-Api-Key', apiKey)
+        .send({ items: [{ ...item('msg-batch-4', 'IGNORED', 'x'), reason: undefined }] });
+      expect(noReason.status).toBe(400);
     });
 
     it('skip sem motivo ou com outcome inválido responde 400', async () => {

@@ -19,6 +19,7 @@ import {
   intakeLookupQuerySchema,
   intakeMailboxMessageParamsSchema,
   intakeMailboxMessageQuerySchema,
+  intakeSkipBatchSchema,
   intakeSkipSchema,
 } from '@/http/schemas/intake-schemas';
 
@@ -84,6 +85,11 @@ export function buildIntakeRouter(
   router.get('/cursor', validate({ query: intakeCursorQuerySchema }), controller.cursor);
   router.put('/cursor', validate({ body: intakeAdvanceCursorSchema }), controller.advanceCursor);
   router.post('/events/skip', validate({ body: intakeSkipSchema }), controller.skip);
+  router.post(
+    '/events/skip-batch',
+    validate({ body: intakeSkipBatchSchema }),
+    controller.skipBatch,
+  );
 
   return router;
 }

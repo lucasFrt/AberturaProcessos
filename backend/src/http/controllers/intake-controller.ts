@@ -10,6 +10,7 @@ import {
   presentListMailbox,
   presentMailboxMessage,
   presentProcessMatch,
+  presentSkipBatchResult,
   presentSkipIntakeResult,
 } from '@/http/presenters/intake-presenter';
 import { presentCollection } from '@/http/presenters/pagination-presenter';
@@ -22,6 +23,7 @@ import type {
   IntakeListMailboxQuery,
   IntakeLookupQuery,
   IntakeMailboxMessageQuery,
+  IntakeSkipBatchBody,
   IntakeSkipBody,
 } from '@/http/schemas/intake-schemas';
 import type { IntakeService } from '@/services/intake-service';
@@ -113,6 +115,29 @@ export class IntakeController {
     }
   }
 
+  skipBatch = (req: Request, res: Response, next: NextFunction): void => {
+    void this.handleSkipBatch(req, res, next);
+  };
+
+  private async handleSkipBatch(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.auth) throw new UnauthenticatedError();
+      const body = req.body as IntakeSkipBatchBody;
+      const results = await this.service.skipEmails(
+        req.auth.userId,
+        body.items.map((item) => ({
+          source: item.source,
+          requester: item.requester,
+          outcome: item.outcome,
+          reason: item.reason,
+        })),
+      );
+      res.status(200).json(presentSkipBatchResult(results));
+    } catch (error) {
+      next(error);
+    }
+  }
+
   cursor = (req: Request, res: Response, next: NextFunction): void => {
     void this.handleCursor(req, res, next);
   };
@@ -194,7 +219,7 @@ export class IntakeController {
     try {
       const query = req.query as unknown as IntakeLookupQuery;
       const matches = await this.service.lookupProcess({
-        ref: query.ref,
+        refs: query.ref,
         companyDocument: query.companyDocument,
         limit: query.limit,
       });

@@ -30,6 +30,16 @@ export interface IntakeEventRepository {
     channel: IntakeChannel,
     internetMessageId: string,
   ): Promise<IntakeEvent | null>;
+  /**
+   * Eventos de várias mensagens de uma vez, por `externalId` **ou**
+   * `internetMessageId` — é o que anota a listagem da caixa com o que já
+   * foi tratado, sem uma consulta por e-mail (docs/13, decisão 9).
+   */
+  findByMessages(
+    channel: IntakeChannel,
+    externalIds: readonly string[],
+    internetMessageIds: readonly string[],
+  ): Promise<IntakeEvent[]>;
   update(id: string, data: UpdateIntakeEventData): Promise<IntakeEvent>;
   /** Mais recentes primeiro. Intake é interno (OPERATIONAL/ADMIN), então não recebe `AccessScope`. */
   list(filters: IntakeEventFilters, pagination: PaginationParams): Promise<Page<IntakeEvent>>;

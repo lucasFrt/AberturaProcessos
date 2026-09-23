@@ -9,6 +9,7 @@ import type {
   ListMailboxResult,
   MailboxMessageView,
   ProcessMatch,
+  SkipBatchItemResult,
   SkipIntakeResult,
 } from '@/services/intake-service';
 
@@ -125,6 +126,39 @@ export function presentSkipIntakeResult(result: SkipIntakeResult): SkipIntakeRes
   return { duplicate: result.duplicate, event: presentIntakeEvent(result.event) };
 }
 
+type SkipBatchItemDto =
+  | { externalId: string; ok: true; duplicate: boolean; event: IntakeEventDto }
+  | { externalId: string; ok: false; error: { code: string; message: string } };
+
+interface SkipBatchResultDto {
+  recorded: number;
+  duplicates: number;
+  failed: number;
+  results: SkipBatchItemDto[];
+}
+
+export function presentSkipBatchResult(results: SkipBatchItemResult[]): SkipBatchResultDto {
+  return {
+    recorded: results.filter((item) => item.ok && !item.duplicate).length,
+    duplicates: results.filter((item) => item.ok && item.duplicate).length,
+    failed: results.filter((item) => !item.ok).length,
+    results: results.map((item) =>
+      item.ok
+        ? {
+            externalId: item.externalId,
+            ok: true,
+            duplicate: item.duplicate,
+            event: presentIntakeEvent(item.event),
+          }
+        : {
+            externalId: item.externalId,
+            ok: false,
+            error: { code: item.error.code, message: item.error.message },
+          },
+    ),
+  };
+}
+
 interface IntakeCursorDto {
   channel: string;
   receivedAt: string | null;
@@ -160,8 +194,12 @@ interface MailboxMessageSummaryDto {
   preview: string;
 }
 
+interface MailboxListItemDto extends MailboxMessageSummaryDto {
+  intake: { eventId: string; status: string; kind: string; processId: string | null } | null;
+}
+
 interface ListMailboxDto {
-  messages: MailboxMessageSummaryDto[];
+  messages: MailboxListItemDto[];
   listed: number;
   blocked: number;
   nextAfter: string | null;
@@ -178,6 +216,14 @@ export function presentListMailbox(result: ListMailboxResult): ListMailboxDto {
       receivedAt: message.receivedAt.toISOString(),
       hasAttachments: message.hasAttachments,
       preview: message.preview,
+      intake: message.intake
+        ? {
+            eventId: message.intake.eventId,
+            status: message.intake.status,
+            kind: message.intake.kind,
+            processId: message.intake.processId,
+          }
+        : null,
     })),
     listed: result.listed,
     blocked: result.blocked,
@@ -217,9 +263,14 @@ export function presentMailboxMessage(message: MailboxMessageView): MailboxMessa
 
 interface ProcessMatchDto {
   matchedBy: string;
+  ref: string | null;
   process: ReturnType<typeof presentProcessListItem>;
 }
 
 export function presentProcessMatch(match: ProcessMatch): ProcessMatchDto {
-  return { matchedBy: match.matchedBy, process: presentProcessListItem(match.process) };
+  return {
+    matchedBy: match.matchedBy,
+    ref: match.ref,
+    process: presentProcessListItem(match.process),
+  };
 }

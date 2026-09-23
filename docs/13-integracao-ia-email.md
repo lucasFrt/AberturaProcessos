@@ -165,6 +165,25 @@ Retentativa de `FAILED` é um passo próprio da rotina (`GET /intake/events?stat
 tentativa; falhou de novo → `skip` com `ESCALATED`), não a releitura pelo cursor — senão um e-mail
 que falha sempre travaria a fila atrás dele.
 
+**Menos chamadas por e-mail (23/09).** As execuções levavam ~40 min para ~25 e-mails, e o tempo
+não era de rede: cada chamada à API é uma rodada do modelo, e cada e-mail custava 5 a 7 (checar
+o evento, ler o corpo, 1 a 3 lookups, agir, anotar). Três mudanças na API cortam as rodadas sem
+tirar o modelo da decisão:
+
+- a listagem traz o `IntakeEvent` de cada mensagem (`intake`, casado por `externalId` ou
+  `internetMessageId`) — some a consulta `GET /intake/events?externalId=` por e-mail;
+- `GET /intake/processes/lookup` aceita `ref` repetido, do mais específico para o menos, e
+  responde qual casou — um lookup por e-mail em vez de um por identificador; o índice local é
+  consultado para todos antes de o iLog ser consultado para qualquer um;
+- `POST /intake/events/skip-batch` registra os `IGNORED`/`ESCALATED` da página numa chamada só.
+
+E no prompt (v10): uma **triagem da página** pela listagem — o modelo lê as prévias, uma linha
+por e-mail, e marca só o ruído evidente (resposta automática, notificação de sistema, confirmação
+curta sem anexo cuja prévia é o e-mail inteiro); tudo o que pode ser documento ou pedido continua
+recebendo a ficha completa, um e-mail por vez. Paralelizar chamadas, decidir por regex/script e
+pular a leitura do corpo de e-mail com anexo continuam fora — foram o que produziu referências
+com telefone e estourou a memória nas primeiras execuções.
+
 Não há teto de e-mails por execução: o modelo é o Haiku 4.5 (barato e rápido) e a rotina pagina
 (50 por página) até a listagem responder `hasMore: false`. A única salvaguarda é de tempo (40 min
 → grava o cursor da última página completa e para). Se a cota do Max apertar, o próximo passo é o
@@ -354,15 +373,16 @@ Detalhe completo em `docs/05-contrato-api.md`, seção "Intake (alimentação po
 | `POST` | `/api-keys` | ADMIN | Cria chave vinculada a um usuário interno. Devolve o segredo **uma vez**. |
 | `GET` | `/api-keys` | ADMIN | Lista (prefixo, usuário, `lastUsedAt`, `revokedAt`). |
 | `DELETE` | `/api-keys/:id` | ADMIN | Revoga. |
-| `GET` | `/intake/processes/lookup` | OPERATIONAL, ADMIN | Candidatos por `ref` (código/referência), `companyDocument`, `requesterEmail`. |
+| `GET` | `/intake/processes/lookup` | OPERATIONAL, ADMIN | Candidatos por `ref` (código, referência ou identificador; repetível, vale o primeiro que casar), `companyDocument`. |
 | `POST` | `/intake/processes` | OPERATIONAL, ADMIN | Abre processo a partir de um e-mail (JSON ou multipart com `payload` + `files`). |
 | `POST` | `/intake/attachments` | OPERATIONAL, ADMIN | Anexa documentos/nota a processo existente por `processRef` ou `processId`. |
 | `GET` | `/intake/events` | OPERATIONAL, ADMIN | Eventos de intake; filtro `externalId` para checar idempotência, `status=FAILED` para retentativas, `kind=ESCALATED` para auditoria. |
-| `GET` | `/intake/mailbox/messages` | OPERATIONAL, ADMIN | Caixa de entrada desde `after`, já sem remetentes bloqueados (`exclude`), lida pelo servidor (decisão 9). |
+| `GET` | `/intake/mailbox/messages` | OPERATIONAL, ADMIN | Caixa de entrada desde `after`, já sem remetentes bloqueados (`exclude`) e com o evento de intake de cada mensagem, lida pelo servidor (decisão 9). |
 | `GET` | `/intake/mailbox/messages/:id` | OPERATIONAL, ADMIN | Corpo em texto limpo + anexos de uma mensagem (decisão 9). |
 | `GET` | `/intake/cursor` | OPERATIONAL, ADMIN | De onde a próxima execução continua a leitura da caixa (decisão 9). |
 | `PUT` | `/intake/cursor` | OPERATIONAL, ADMIN | Grava até onde a leitura chegou (fim de cada página); só anda para a frente. |
 | `POST` | `/intake/events/skip` | OPERATIONAL, ADMIN | Registra e-mail lido e não processado (IGNORED/ESCALATED) com o motivo (decisão 9). |
+| `POST` | `/intake/events/skip-batch` | OPERATIONAL, ADMIN | Os mesmos registros de uma página numa chamada só; cada item com o próprio resultado (decisão 9). |
 
 ## Configuração
 

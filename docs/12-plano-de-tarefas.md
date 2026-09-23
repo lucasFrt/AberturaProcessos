@@ -547,6 +547,29 @@ complemento em vez de duplicar, detalhe com `identifiers`/`ilog*`, filtro `ilogL
 typecheck, build e suíte completa verdes; MCP compila e sobe. Fase seguinte (30c): arquivos do
 `ifilesystem` no processo e mapeamento de etapas.
 
+### Tarefa 31 — Rotina com menos chamadas por e-mail (prompt v10)
+
+Doc 13, decisão 9 ("Menos chamadas por e-mail"): as execuções levavam ~40 min para ~25 e-mails
+porque cada e-mail custava 5 a 7 rodadas do modelo. (a) `GET /intake/mailbox/messages` devolve
+`intake` (evento da mensagem por `externalId` ou `internetMessageId`,
+`IntakeEventRepository.findByMessages`). (b) `GET /intake/processes/lookup` aceita `ref`
+repetido: exato local (código, referência, índice) na ordem, iLog só se nenhum casar, parando no
+primeiro; `ref` casado em cada candidato. (c) `POST /intake/events/skip-batch` (1–100 itens, cada
+um um `skip` independente; erro de domínio de um item não derruba o lote). (d) Prompt v10:
+triagem da página pela listagem, e-mail citado pelo número na lista (`/tmp/fonte.jq`,
+`/tmp/lote.jq`), lookup com todos os identificadores, descartes em lote no fim da página, notas na
+mesma chamada da ação, `maxChars=3000`.
+
+**Refs:** doc 13 (decisão 9), doc 05 (`/intake/*`), `docs/prompts/rotina-intake-claude-max.md`.
+
+**Aceite:** unit: listagem anotada por `externalId` e por `internetMessageId`; lookup com vários
+`ref` casa no índice sem ir ao iLog, vai ao iLog na ordem e para no primeiro, parciais de todos
+quando nenhum casa; lote registra em ordem, erro de domínio vira resultado do item, erro inesperado
+propaga. Integração: `ref` repetido devolve o `ref` casado, 11 `ref` → 400; `skip-batch` registra,
+repete com `duplicate`, 400 para lote vazio/item inválido; `findByMessages` no SQL Server. Blocos
+bash do prompt executados com jq 1.6 e 1.7 contra um `curl` falso, com os payloads validados pelos
+schemas Zod. Lint, typecheck, build e suíte completa verdes.
+
 
 ## Ordem e paralelismo
 

@@ -20,7 +20,11 @@ import type { Company } from '@/domain/entities/company';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '@/domain/errors/app-error';
 import { DocumentService } from '@/services/document-service';
 import { IlogSyncService } from '@/services/ilog-sync-service';
-import type { AttachIntakeInput, CreateProcessIntakeInput } from '@/services/intake-service';
+import type {
+  AttachIntakeInput,
+  CreateProcessIntakeInput,
+  SkipIntakeInput,
+} from '@/services/intake-service';
 import { cleanBodyText, sanitizeFolderName } from '@/services/intake-service';
 import { IntakeService } from '@/services/intake-service';
 import { ProcessService } from '@/services/process-service';
@@ -634,6 +638,41 @@ describe('IntakeService (docs/13)', () => {
       expect(ctx.mailboxReader.listCalls[0]).toEqual({ after: t(2), limit: 3 });
     });
 
+    it('anota cada mensagem com o evento de intake que já tiver, por externalId ou internetMessageId', async () => {
+      const ctx = await buildContext();
+      const t = (minute: number): Date =>
+        new Date(`2026-09-21T15:${String(minute).padStart(2, '0')}:00.000Z`);
+      ctx.mailboxReader.add({ id: 'novo', receivedAt: t(1) });
+      ctx.mailboxReader.add({ id: 'pulado', receivedAt: t(2) });
+      ctx.mailboxReader.add({ id: 'movido', receivedAt: t(3), internetMessageId: '<movido@x>' });
+      await ctx.service.skipEmail(ACTOR, {
+        source: { channel: 'EMAIL', externalId: 'pulado', receivedAt: t(2) },
+        outcome: 'IGNORED',
+        reason: 'Confirmação de recebimento.',
+      });
+      // Registrada com o id antigo do Graph (antes de a mensagem mudar de pasta).
+      const moved = await ctx.service.skipEmail(ACTOR, {
+        source: {
+          channel: 'EMAIL',
+          externalId: 'id-antigo',
+          internetMessageId: '<movido@x>',
+          receivedAt: t(3),
+        },
+        outcome: 'ESCALATED',
+        reason: 'pedido fora do intake',
+      });
+
+      const result = await ctx.service.listMailbox({ after: t(0), limit: 10, excludeSenders: [] });
+      expect(result.messages.map((m) => [m.id, m.intake])).toEqual([
+        ['novo', null],
+        ['pulado', expect.objectContaining({ status: 'COMPLETED', kind: 'IGNORED' })],
+        [
+          'movido',
+          { eventId: moved.event.id, status: 'COMPLETED', kind: 'ESCALATED', processId: null },
+        ],
+      ]);
+    });
+
     it('detalhe devolve corpo limpo, sem histórico citado, e anexos sem inline', async () => {
       const ctx = await buildContext();
       ctx.mailboxReader.add({
@@ -1187,13 +1226,13 @@ describe('IntakeService (docs/13)', () => {
         receivedAt: null,
       });
 
-      const matches = await ctx.service.lookupProcess({ ref: '123123', limit: 5 });
+      const matches = await ctx.service.lookupProcess({ refs: ['123123'], limit: 5 });
 
       expect(matches.map((m) => m.matchedBy)).toEqual(['REFERENCE', 'PARTIAL']);
       expect(new Set(matches.map((m) => m.process.id)).size).toBe(2);
 
       const code = ctx.processRepository.items[0]?.code ?? '';
-      const byCode = await ctx.service.lookupProcess({ ref: code, limit: 5 });
+      const byCode = await ctx.service.lookupProcess({ refs: [code], limit: 5 });
       expect(byCode[0]?.matchedBy).toBe('CODE');
     });
 
@@ -1217,7 +1256,7 @@ describe('IntakeService (docs/13)', () => {
       }
 
       const filtered = await ctx.service.lookupProcess({
-        ref: 'MESMA-REF',
+        refs: ['MESMA-REF'],
         companyDocument: '11.222.333/0001-81',
         limit: 5,
       });
@@ -1227,6 +1266,28 @@ describe('IntakeService (docs/13)', () => {
       const byCompany = await ctx.service.lookupProcess({ companyDocument: OTHER_CNPJ, limit: 5 });
       expect(byCompany).toHaveLength(1);
       expect(byCompany[0]?.matchedBy).toBe('PARTIAL');
+      expect(byCompany[0]?.ref).toBeNull();
+    });
+
+    it('sem casamento exato, os parciais vêm de todos os refs, cada um com o ref que o trouxe', async () => {
+      const ctx = await buildContext();
+      const order = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({ reference: 'Pedido 4500123' }),
+      );
+      const invoice = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({
+          source: { channel: 'EMAIL', externalId: 'msg-b', receivedAt: RECEIVED_AT },
+          reference: 'Fatura INV-2026-118',
+        }),
+      );
+
+      const partial = await ctx.service.lookupProcess({ refs: ['4500', 'INV-2026'], limit: 5 });
+      expect(partial.map((m) => [m.process.id, m.matchedBy, m.ref])).toEqual([
+        [order.process.id, 'PARTIAL', '4500'],
+        [invoice.process.id, 'PARTIAL', 'INV-2026'],
+      ]);
     });
   });
 
@@ -1257,16 +1318,16 @@ describe('IntakeService (docs/13)', () => {
         createInput({ reference: 'Novo processo 230/26', identifiers: ['DANGB26080406'] }),
       );
 
-      const byHbl = await ctx.service.lookupProcess({ ref: 'dangb 26080406', limit: 5 });
+      const byHbl = await ctx.service.lookupProcess({ refs: ['dangb 26080406'], limit: 5 });
       expect(byHbl.map((m) => [m.process.id, m.matchedBy])).toEqual([
         [created.process.id, 'OTHER'],
       ]);
 
-      const byNumber = await ctx.service.lookupProcess({ ref: '230-26', limit: 5 });
+      const byNumber = await ctx.service.lookupProcess({ refs: ['230-26'], limit: 5 });
       expect(byNumber[0]).toMatchObject({ matchedBy: 'OPUS_NUMBER' });
 
       // Sem iLog configurado, nada é consultado fora: um identificador desconhecido só não casa.
-      expect(await ctx.service.lookupProcess({ ref: 'NAOEXISTE99', limit: 5 })).toEqual([]);
+      expect(await ctx.service.lookupProcess({ refs: ['NAOEXISTE99'], limit: 5 })).toEqual([]);
       expect(ctx.ilogSource.calls.findByIdentifier).toBe(0);
     });
 
@@ -1283,7 +1344,7 @@ describe('IntakeService (docs/13)', () => {
         }),
       );
 
-      const found = await ctx.service.lookupProcess({ ref: '31435/26', limit: 5 });
+      const found = await ctx.service.lookupProcess({ refs: ['31435/26'], limit: 5 });
       expect(found).toHaveLength(1);
       expect(found[0]).toMatchObject({ matchedBy: 'OPUS_NUMBER' });
       expect(found[0]?.process).toMatchObject({ ilogNumber: '31435/26', source: 'ILOG' });
@@ -1291,13 +1352,44 @@ describe('IntakeService (docs/13)', () => {
       expect(ctx.companyRepository.items[0]).toMatchObject({ cnpj: '12345678000195' });
 
       // Agora está no índice: o iLog não é consultado de novo, nem por outro identificador do mesmo processo.
-      const again = await ctx.service.lookupProcess({ ref: '132605301737430', limit: 5 });
+      const again = await ctx.service.lookupProcess({ refs: ['132605301737430'], limit: 5 });
       expect(again.map((m) => m.matchedBy)).toEqual(['CE']);
       expect(ctx.ilogSource.calls.findByIdentifier).toBe(1);
 
       // Nome de empresa não é identificador: não vai ao iLog.
-      await ctx.service.lookupProcess({ ref: 'Casa e Novidade', limit: 5 });
+      await ctx.service.lookupProcess({ refs: ['Casa e Novidade'], limit: 5 });
       expect(ctx.ilogSource.calls.findByIdentifier).toBe(1);
+    });
+
+    it('com vários refs vale o primeiro que casar no índice; o iLog só é consultado se nenhum casar', async () => {
+      const ctx = await buildContext({ ilog: true });
+      const created = await ctx.service.createProcessFromEmail(
+        ACTOR,
+        createInput({ reference: 'Pré-alerta', identifiers: ['DANGB26080406', 'MSKU1234567'] }),
+      );
+
+      // O número da Opus não está no índice, o HBL está: casa pelo HBL, sem ir ao iLog.
+      const byHbl = await ctx.service.lookupProcess({
+        refs: ['31435/26', 'DANGB26080406', 'MSKU1234567'],
+        limit: 5,
+      });
+      expect(byHbl.map((m) => [m.process.id, m.ref])).toEqual([
+        [created.process.id, 'DANGB26080406'],
+      ]);
+      expect(byHbl[0]?.matchedBy).not.toBe('PARTIAL');
+      expect(ctx.ilogSource.calls.findByIdentifier).toBe(0);
+
+      // Nenhum no índice: iLog na ordem dos refs, parando no primeiro que achar.
+      ctx.ilogSource.processes.set(
+        7,
+        makeIlogProcess({ ilogProcessId: 7, number: '31440/26', houseBl: 'ZZZ987654' }),
+      );
+      const viaIlog = await ctx.service.lookupProcess({
+        refs: ['NAOEXISTE99', 'ZZZ987654', '31440/26'],
+        limit: 5,
+      });
+      expect(viaIlog[0]).toMatchObject({ ref: 'ZZZ987654', process: { ilogNumber: '31440/26' } });
+      expect(ctx.ilogSource.calls.findByIdentifier).toBe(2);
     });
 
     it('attachToProcess resolve o processo por identificador do índice e, se preciso, pelo iLog', async () => {
@@ -1405,7 +1497,7 @@ describe('IntakeService (docs/13)', () => {
         attachInput({ processId: created.process.id, addReferences: ['MSKU7654321'] }),
       );
       expect(result.warnings.some((w) => w.includes('Referência cheia'))).toBe(true);
-      const match = await ctx.service.lookupProcess({ ref: 'MSKU7654321', limit: 5 });
+      const match = await ctx.service.lookupProcess({ refs: ['MSKU7654321'], limit: 5 });
       expect(match.map((m) => [m.process.id, m.matchedBy])).toEqual([
         [created.process.id, 'CONTAINER'],
       ]);
@@ -1515,6 +1607,66 @@ describe('IntakeService (docs/13)', () => {
           reason: 'Ruído.',
         }),
       ).rejects.toMatchObject({ code: 'INTAKE_IN_PROGRESS' });
+    });
+
+    it('skipEmails registra cada item em ordem; erro de domínio de um item não derruba os outros', async () => {
+      const ctx = await buildContext();
+      await ctx.intakeEventRepository.claim({
+        channel: 'EMAIL',
+        externalId: 'msg-busy',
+        internetMessageId: null,
+        kind: 'PROCESS',
+        status: 'PROCESSING',
+        subject: null,
+        requesterName: null,
+        requesterEmail: null,
+        receivedAt: RECEIVED_AT,
+        createdById: ACTOR,
+      });
+      await ctx.service.skipEmail(ACTOR, {
+        source: { channel: 'EMAIL', externalId: 'msg-old', receivedAt: RECEIVED_AT },
+        outcome: 'IGNORED',
+        reason: 'Ruído.',
+      });
+      const source = (externalId: string): SkipIntakeInput['source'] => ({
+        channel: 'EMAIL',
+        externalId,
+        receivedAt: RECEIVED_AT,
+      });
+
+      const results = await ctx.service.skipEmails(ACTOR, [
+        { source: source('msg-a'), outcome: 'IGNORED', reason: 'Confirmação de recebimento.' },
+        { source: source('msg-busy'), outcome: 'IGNORED', reason: 'Ruído.' },
+        { source: source('msg-old'), outcome: 'ESCALATED', reason: 'Repetido.' },
+        {
+          source: source('msg-b'),
+          requester: { email: 'agente@cargo.com' },
+          outcome: 'ESCALATED',
+          reason: 'vários embarques no mesmo e-mail',
+        },
+      ]);
+      expect(results.map((r) => [r.externalId, r.ok, r.ok ? r.duplicate : r.error.code])).toEqual([
+        ['msg-a', true, false],
+        ['msg-busy', false, 'INTAKE_IN_PROGRESS'],
+        ['msg-old', true, true],
+        ['msg-b', true, false],
+      ]);
+      expect(await ctx.intakeEventRepository.findByExternalId('EMAIL', 'msg-b')).toMatchObject({
+        kind: 'ESCALATED',
+        status: 'COMPLETED',
+        requesterEmail: 'agente@cargo.com',
+      });
+      expect((await ctx.intakeEventRepository.findByExternalId('EMAIL', 'msg-old'))?.kind).toBe(
+        'IGNORED',
+      );
+
+      // Erro que não é de domínio (banco fora) derruba o lote: repetir é seguro.
+      jest.spyOn(ctx.intakeEventRepository, 'claim').mockRejectedValueOnce(new Error('banco fora'));
+      await expect(
+        ctx.service.skipEmails(ACTOR, [
+          { source: source('msg-c'), outcome: 'IGNORED', reason: 'Ruído.' },
+        ]),
+      ).rejects.toThrow('banco fora');
     });
 
     it('e-mail pulado pode ser processado depois: o evento é reaberto, não duplicado', async () => {

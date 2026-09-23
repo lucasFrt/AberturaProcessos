@@ -68,9 +68,18 @@ export const intakeAttachSchema = z
   });
 export type IntakeAttachBody = z.infer<typeof intakeAttachSchema>;
 
+const lookupRefSchema = z.string().trim().min(1).max(255);
+
 export const intakeLookupQuerySchema = z
   .object({
-    ref: z.string().trim().min(1).max(255).optional(),
+    /**
+     * Um ou vários (`?ref=A&ref=B`, do mais específico para o menos): o
+     * Express 5 entrega o parâmetro repetido como array. Sai sempre array.
+     */
+    ref: z
+      .union([lookupRefSchema, z.array(lookupRefSchema).min(1).max(10)])
+      .optional()
+      .transform((value) => (value === undefined ? undefined : [value].flat())),
     companyDocument: z.string().trim().min(11).max(20).optional(),
     limit: z.coerce.number().int().positive().max(20).default(5),
   })
@@ -88,6 +97,12 @@ export const intakeSkipSchema = z.object({
   reason: z.string().trim().min(3, 'Informe o motivo.').max(1000),
 });
 export type IntakeSkipBody = z.infer<typeof intakeSkipSchema>;
+
+/** Descartes de uma página numa chamada só; cada item é um `skip` independente. */
+export const intakeSkipBatchSchema = z.object({
+  items: z.array(intakeSkipSchema).min(1).max(100),
+});
+export type IntakeSkipBatchBody = z.infer<typeof intakeSkipBatchSchema>;
 
 export const intakeCursorQuerySchema = z.object({
   channel: z.enum(INTAKE_CHANNELS).default('EMAIL'),

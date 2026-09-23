@@ -61,6 +61,19 @@ export class InMemoryIntakeEventRepository implements IntakeEventRepository {
     );
   }
 
+  async findByMessages(
+    channel: IntakeChannel,
+    externalIds: readonly string[],
+    internetMessageIds: readonly string[],
+  ): Promise<IntakeEvent[]> {
+    return this.items.filter(
+      (item) =>
+        item.channel === channel &&
+        (externalIds.includes(item.externalId) ||
+          (item.internetMessageId !== null && internetMessageIds.includes(item.internetMessageId))),
+    );
+  }
+
   async update(id: string, data: UpdateIntakeEventData): Promise<IntakeEvent> {
     const event = this.items.find((item) => item.id === id);
     if (!event) throw new Error(`Fake: evento ${id} não existe.`);
