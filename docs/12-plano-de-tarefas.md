@@ -570,6 +570,26 @@ repete com `duplicate`, 400 para lote vazio/item inválido; `findByMessages` no 
 bash do prompt executados com jq 1.6 e 1.7 contra um `curl` falso, com os payloads validados pelos
 schemas Zod. Lint, typecheck, build e suíte completa verdes.
 
+### Tarefa 32 — Primeira execução real do v10: pausa do iLog e prompt v11
+
+Doc 13, decisão 9 ("O que a primeira execução do v10 ensinou"). (a) `IlogSyncService`: depois de
+uma falha do iLog (consulta pontual ou ciclo), a consulta pontual pula o iLog por 5 minutos em vez
+de esperar o timeout de conexão a cada identificador; um ciclo bem-sucedido religa; relógio
+injetável (`clock`). (b) `GET /intake/processes/lookup` devolve `ilogAvailable` (`null` desligado,
+`false` em pausa). (c) Prompt v11: tempo medido por comando, descartes + cursor num comando que
+não grava o cursor se o lote falhar (`CURSOR=não` nas retentativas e ao parar por tempo), páginas
+de 50, horário de São Paulo, regra contra decidir e-mail pelo padrão de outro, `(iLog
+indisponível)` no motivo do "sem processo".
+
+**Refs:** doc 13 (decisão 9), doc 15 ("Retaguarda B implícita"), doc 05 (`lookup`).
+
+**Aceite:** unit: falha do iLog pausa a consulta (várias chamadas, uma tentativa), a pausa expira,
+ciclo falho pausa e ciclo bem-sucedido religa; `lookup` com vários `ref` e iLog fora custa uma
+tentativa e `ilogLookupAvailable()` vira `false`; `null` sem iLog. Integração: `ilogAvailable:
+null` no lookup com `ILOG_SYNC_ENABLED=false`. Blocos do prompt com jq 1.6 e 1.7: lote recusado
+(404) não grava cursor, lote aceito grava, retentativas não gravam, lote vazio grava, linha
+inválida não envia nada. Lint, typecheck, build e suíte completa verdes.
+
 
 ## Ordem e paralelismo
 

@@ -46,6 +46,8 @@ export interface IlogSyncServiceDeps {
   processService: ProcessService;
   logger: SyncLogger;
   options: IlogSyncOptions;
+  /** Relógio em ms (padrão `Date.now`); os testes controlam a pausa da consulta pontual. */
+  clock?: () => number;
 }
 
 export interface IlogSyncRunResult {
@@ -80,6 +82,15 @@ const ALL: AccessScope = { kind: 'ALL' };
 
 /** Lote de processos lidos do iLog por ida (`IN (...)`), alinhado ao provider. */
 const MIRROR_BATCH_SIZE = 200;
+
+/**
+ * Pausa da consulta pontual depois de uma falha do iLog. MySQL inalcançável
+ * custa o timeout inteiro (`ILOG_MYSQL_TIMEOUT_MS`, 10 s) a cada tentativa: em
+ * 23/09, com o servidor sem rota para o iLog, 42% de uma execução da rotina de
+ * intake foi espera por ele, um identificador por vez. O ciclo periódico
+ * continua tentando e religa a consulta assim que conecta.
+ */
+const LOOKUP_PAUSE_MS = 5 * 60 * 1000;
 
 function emptyResult(): IlogSyncRunResult {
   return {
@@ -150,8 +161,27 @@ export function referenceOf(process: IlogProcess): string {
  */
 export class IlogSyncService {
   private running = false;
+  /** Até quando a consulta pontual pula o iLog (ms); 0 = liberada. */
+  private lookupPausedUntil = 0;
 
   constructor(private readonly deps: IlogSyncServiceDeps) {}
+
+  /**
+   * `false` enquanto a consulta pontual está em pausa por falha recente do
+   * iLog: um "não achei" nesse período não quer dizer que o processo não
+   * existe, e o intake avisa isso ao agente.
+   */
+  isLookupAvailable(): boolean {
+    return this.now() >= this.lookupPausedUntil;
+  }
+
+  private now(): number {
+    return (this.deps.clock ?? Date.now)();
+  }
+
+  private pauseLookups(): void {
+    this.lookupPausedUntil = this.now() + LOOKUP_PAUSE_MS;
+  }
 
   /** Um ciclo: backfill (só na primeira vez) + incremental pelo `changelog`. */
   async runOnce(): Promise<IlogSyncRunResult> {
@@ -194,10 +224,12 @@ export class IlogSyncService {
         lastRunAt: new Date(),
         lastError: null,
       });
+      this.lookupPausedUntil = 0;
       this.deps.logger.info({ ...ctx.result }, 'iLog: ciclo concluído');
       return ctx.result;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro desconhecido.';
+      this.pauseLookups();
       await this.deps.syncStateRepository.update('ILOG', {
         lastRunAt: new Date(),
         lastError: message,
@@ -215,6 +247,7 @@ export class IlogSyncService {
    * derruba o intake: registra em `lastError` e devolve vazio.
    */
   async importByIdentifier(value: string, limit = 5): Promise<ProcessListItem[]> {
+    if (!this.isLookupAvailable()) return [];
     try {
       const ids = await this.deps.source.findProcessIdsByIdentifier(value, limit);
       if (ids.length === 0) return [];
@@ -222,6 +255,7 @@ export class IlogSyncService {
       const processIds = await this.mirrorIds(ids, ctx);
       return this.deps.processRepository.findListItemsByIds(processIds);
     } catch (error) {
+      this.pauseLookups();
       const message = error instanceof Error ? error.message : 'Erro desconhecido.';
       this.deps.logger.warn({ value, error: message }, 'iLog: consulta pontual falhou');
       await this.deps.syncStateRepository.update('ILOG', { lastError: message });

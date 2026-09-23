@@ -717,6 +717,8 @@ describe('Intake por e-mail — integração (docs/13)', () => {
         .set('X-Api-Key', apiKey)
         .query(`ref=NAO-EXISTE-1&ref=MSKU1234567&ref=${encodeURIComponent(process.code)}`);
       expect(lookup.status).toBe(200);
+      // ILOG_SYNC_ENABLED=false no .env.test: a retaguarda do iLog está desligada.
+      expect((lookup.body as { ilogAvailable: boolean | null }).ilogAvailable).toBeNull();
       const matches = (
         lookup.body as {
           matches: Array<{ matchedBy: string; ref: string | null; process: { id: string } }>;

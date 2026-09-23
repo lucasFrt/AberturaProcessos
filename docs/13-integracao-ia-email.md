@@ -184,6 +184,30 @@ recebendo a ficha completa, um e-mail por vez. Paralelizar chamadas, decidir por
 pular a leitura do corpo de e-mail com anexo continuam fora — foram o que produziu referências
 com telefone e estourou a memória nas primeiras execuções.
 
+**O que a primeira execução do v10 ensinou (23/09, prompt v11).** Rodou contra a API antiga (o
+commit não tinha ido ao GitHub, e o deploy faz `git pull`): 33 e-mails em 9m36s, contra ~40 min
+para 25 no v8. Quatro achados, e o que mudou:
+
+- *O lookup esperava o iLog.* Toda busca por identificador com dígito levou ~10,5 s — o timeout
+  de conexão do MySQL, inalcançável a partir do servidor — e nunca achou nada: 42% da execução, e
+  11 de 23 e-mails lidos viraram "sem processo" quando o processo existia no iLog. O servidor
+  passou a pausar a consulta ao iLog por 5 minutos depois de uma falha, e o `lookup` diz
+  `ilogAvailable: false` para o agente registrar o "sem processo" como não confiável
+  (`sem processo para … (iLog indisponível)`), achável depois pelo motivo.
+- *O cursor andou com o lote recusado* (404 da API antiga): os descartes de três páginas não
+  foram registrados e ninguém mais os veria. Descartes e cursor viraram um comando só, que só
+  grava o cursor se o lote foi aceito.
+- *O modelo não sabe quanto tempo passou*: parou aos 9 minutos achando que eram 40. O tempo agora
+  é impresso pelos comandos (`tempo de execução: N min`), e a regra se refere a esse número.
+- *Decisão por padrão*: sete guias GNRE de sete processos diferentes decididas pela primeira
+  ("mesma série, mesmo cliente"). A regra agora é explícita: cada e-mail tem seu lookup; só se
+  reaproveita o resultado para os **mesmos** identificadores, na mesma página. Os próprios chats
+  da rotina sugeriram o contrário ("IDEAL COMERCIAL 30xxx/26 = sempre sem processo") — era o
+  iLog fora do ar, não um padrão.
+
+Também: páginas de 50 (menos voltas de listagem, triagem e cursor) e horário de São Paulo na
+lista, que o relatório copia.
+
 Não há teto de e-mails por execução: o modelo é o Haiku 4.5 (barato e rápido) e a rotina pagina
 (50 por página) até a listagem responder `hasMore: false`. A única salvaguarda é de tempo (40 min
 → grava o cursor da última página completa e para). Se a cota do Max apertar, o próximo passo é o

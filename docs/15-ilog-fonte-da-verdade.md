@@ -265,7 +265,13 @@ Desvios (todos deliberados):
   intake consultam o iLog sozinhos quando o índice não tem o identificador (só para `ref` com
   dígito e ≥ 4 caracteres normalizados; nome de empresa nunca vai ao iLog). Menos uma ferramenta e
   menos uma decisão para o agente; o custo é uma consulta MySQL por identificador desconhecido
-  (colunas indexadas, `LIMIT`, `max_execution_time`). Falha do iLog vira `lastError`, não erro.
+  (colunas indexadas, `LIMIT`, `max_execution_time`). Falha do iLog vira `lastError`, não erro —
+  e **pausa a retaguarda por 5 minutos** (`IlogSyncService.isLookupAvailable`): com o MySQL
+  inalcançável cada tentativa custa o timeout de conexão inteiro (`ILOG_MYSQL_TIMEOUT_MS`, 10 s),
+  e em 23/09 isso foi 42% de uma execução da rotina, um identificador por vez. Uma falha do ciclo
+  periódico também pausa; um ciclo bem-sucedido religa na hora. Enquanto pausada, o `lookup`
+  responde `ilogAvailable: false`, e o agente registra o "sem processo" dizendo que o iLog estava
+  fora (docs/13, decisão 9).
 - **O job roda no processo da API, não no worker.** O `RealtimeProvider` (Socket.IO) só existe
   no processo da API; no worker o board não receberia `process:created` dos espelhados. É um
   `setInterval` com `unref`, atraso inicial de 15 s, e o service rejeita ciclos sobrepostos.

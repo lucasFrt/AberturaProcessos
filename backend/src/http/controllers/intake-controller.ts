@@ -223,7 +223,10 @@ export class IntakeController {
         companyDocument: query.companyDocument,
         limit: query.limit,
       });
-      res.status(200).json({ matches: matches.map(presentProcessMatch) });
+      res.status(200).json({
+        matches: matches.map(presentProcessMatch),
+        ilogAvailable: this.service.ilogLookupAvailable(),
+      });
     } catch (error) {
       next(error);
     }

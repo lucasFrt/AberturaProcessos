@@ -33,7 +33,7 @@ interface Context {
 }
 
 async function buildContext(
-  options: { actorEmail?: string | null; admin?: boolean } = {},
+  options: { actorEmail?: string | null; admin?: boolean; clock?: () => number } = {},
 ): Promise<Context> {
   const source = new FakeIlogProcessSource();
   const syncStateRepository = new InMemoryIlogSyncStateRepository();
@@ -99,6 +99,7 @@ async function buildContext(
       },
     },
     options: { backfillDays: 90, changelogLimit: 100, actorEmail: options.actorEmail ?? null },
+    ...(options.clock ? { clock: options.clock } : {}),
   });
 
   return {
@@ -593,5 +594,42 @@ describe('IlogSyncService.importByIdentifier — retaguarda B (docs/15, seção 
     expect(await ctx.service.importByIdentifier('31435/26')).toEqual([]);
     expect((await ctx.syncStateRepository.get('ILOG'))?.lastError).toBe('timeout');
     expect(ctx.warnings).toContain('iLog: consulta pontual falhou');
+  });
+
+  it('depois de uma falha, pula o iLog por 5 min em vez de esperar o timeout a cada identificador', async () => {
+    let now = Date.parse('2026-09-23T14:41:00Z');
+    const ctx = await buildContext({ clock: () => now });
+    ctx.source.failWith = new Error('connect ETIMEDOUT');
+
+    expect(await ctx.service.importByIdentifier('30611/26')).toEqual([]);
+    expect(ctx.service.isLookupAvailable()).toBe(false);
+    for (const ref of ['DUAP-009126', '26IDL-040', 'DANGB26070125']) {
+      expect(await ctx.service.importByIdentifier(ref)).toEqual([]);
+    }
+    expect(ctx.source.calls.findByIdentifier).toBe(1);
+
+    // Passada a pausa, tenta de novo; o iLog voltou, então acha e fica liberado.
+    now += 5 * 60 * 1000;
+    ctx.source.failWith = null;
+    ctx.source.processes.set(9, makeIlogProcess({ ilogProcessId: 9, number: '30611/26' }));
+    expect(await ctx.service.importByIdentifier('30611/26')).toHaveLength(1);
+    expect(ctx.source.calls.findByIdentifier).toBe(2);
+    expect(ctx.service.isLookupAvailable()).toBe(true);
+  });
+
+  it('o ciclo periódico pausa a consulta quando falha e a religa na hora quando conecta', async () => {
+    const now = Date.parse('2026-09-23T14:41:00Z');
+    const ctx = await buildContext({ clock: () => now });
+    ctx.source.failWith = new Error('connect ETIMEDOUT');
+    await expect(ctx.service.runOnce()).rejects.toThrow('connect ETIMEDOUT');
+    expect(ctx.service.isLookupAvailable()).toBe(false);
+    expect(await ctx.service.importByIdentifier('30611/26')).toEqual([]);
+    expect(ctx.source.calls.findByIdentifier).toBe(0);
+
+    ctx.source.failWith = null;
+    await ctx.service.runOnce();
+    expect(ctx.service.isLookupAvailable()).toBe(true);
+    await ctx.service.importByIdentifier('30611/26');
+    expect(ctx.source.calls.findByIdentifier).toBe(1);
   });
 });

@@ -633,6 +633,16 @@ export class IntakeService {
     return matches.slice(0, query.limit);
   }
 
+  /**
+   * Se a retaguarda do iLog está respondendo: `null` = desligada
+   * (`ILOG_SYNC_ENABLED=false`); `false` = em pausa por falha recente. Com
+   * `false`, um lookup sem resultado não prova que o processo não existe — o
+   * agente registra o "sem processo" dizendo isso (docs/13, decisão 13).
+   */
+  ilogLookupAvailable(): boolean | null {
+    return this.deps.ilogSyncService ? this.deps.ilogSyncService.isLookupAvailable() : null;
+  }
+
   async listEvents(
     filters: IntakeEventFilters,
     pagination: PaginationParams,

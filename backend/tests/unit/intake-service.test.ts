@@ -1392,6 +1392,23 @@ describe('IntakeService (docs/13)', () => {
       expect(ctx.ilogSource.calls.findByIdentifier).toBe(2);
     });
 
+    it('com o iLog fora do ar, vários refs custam uma tentativa só e o lookup avisa que o iLog está indisponível', async () => {
+      const off = await buildContext();
+      expect(off.service.ilogLookupAvailable()).toBeNull();
+
+      const ctx = await buildContext({ ilog: true });
+      expect(ctx.service.ilogLookupAvailable()).toBe(true);
+      ctx.ilogSource.failWith = new Error('connect ETIMEDOUT');
+
+      const matches = await ctx.service.lookupProcess({
+        refs: ['30611/26', 'DUAP-009126', '26IDL-040', 'DANGB26070125'],
+        limit: 5,
+      });
+      expect(matches).toEqual([]);
+      expect(ctx.ilogSource.calls.findByIdentifier).toBe(1);
+      expect(ctx.service.ilogLookupAvailable()).toBe(false);
+    });
+
     it('attachToProcess resolve o processo por identificador do índice e, se preciso, pelo iLog', async () => {
       const ctx = await buildContext({ ilog: true });
       const created = await ctx.service.createProcessFromEmail(

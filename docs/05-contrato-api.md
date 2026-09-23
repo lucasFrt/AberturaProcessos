@@ -672,8 +672,12 @@ Candidatos para o agente conferir antes de decidir entre abrir e complementar. Q
 `companyDocument`.
 
 ```json
-{ "matches": [ { "matchedBy": "HBL", "ref": "DANGB26080406", "process": { "...": "item de listagem" } }, { "matchedBy": "PARTIAL", "ref": "DANGB26080406", "process": { "...": "" } } ] }
+{ "matches": [ { "matchedBy": "HBL", "ref": "DANGB26080406", "process": { "...": "item de listagem" } }, { "matchedBy": "PARTIAL", "ref": "DANGB26080406", "process": { "...": "" } } ], "ilogAvailable": true }
 ```
+
+`ilogAvailable`: `null` = retaguarda do iLog desligada (`ILOG_SYNC_ENABLED=false`); `false` = o
+iLog falhou há menos de 5 minutos e não foi consultado — `matches` vazio, então, **não** prova que
+o processo não existe (docs/15, "Retaguarda B implícita"); `true` = disponível.
 
 `matchedBy`: `CODE` (código exato), `REFERENCE` (referência exata), um `kind` do índice de
 identificadores (`OPUS_NUMBER`, `CLIENT_REF`, `HBL`, `MBL`, `CONTAINER`, `INVOICE`, `DI`, `CE`,
@@ -687,8 +691,9 @@ no primeiro que achar** (só `ref` com cara de identificador: pelo menos um díg
 normalizados), e espelha o processo encontrado antes de responder — a retaguarda B do docs/15. O
 índice vem antes do iLog para não consultar o iLog pelo número da Opus quando o HBL já está
 aqui. Parciais completam a lista até `limit`: do `ref` que casou, ou de todos quando nenhum casou.
-Falha do iLog não falha o lookup: fica registrada em `IlogSyncState.lastError` e a resposta segue
-sem ele.
+Falha do iLog não falha o lookup: fica registrada em `IlogSyncState.lastError`, a resposta segue
+sem ele, e as consultas ao iLog ficam em pausa por 5 minutos (`ilogAvailable: false`) — sem isso
+cada `ref` esperaria o timeout de conexão de novo.
 
 ### `GET /intake/events`
 

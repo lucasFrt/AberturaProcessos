@@ -134,7 +134,9 @@ container.ts  composição manual de dependências (ver acima)
   vira `IntakeEvent` `IGNORED`/`ESCALATED` via `POST /intake/events/skip` (ou, a página inteira,
   `/events/skip-batch`), com o motivo (docs/13, decisão 9). A listagem já traz o evento de cada
   mensagem (`intake`) e o `lookup` aceita `ref` repetido — é o que mantém a rotina em 2–3 chamadas
-  por e-mail (prompt v10); não reintroduzir consulta por e-mail nem paralelismo no prompt. A retentativa de `FAILED` é pela lista `status=FAILED`, não pelo cursor. Nada de
+  por e-mail (prompt v11); não reintroduzir consulta por e-mail nem paralelismo no prompt. O
+  comando "Fim da página" do prompt só grava o cursor se o lote de descartes foi aceito — cursor
+  gravado com descartes perdidos é e-mail que ninguém mais vê. A retentativa de `FAILED` é pela lista `status=FAILED`, não pelo cursor. Nada de
   pasta, regra ou categoria no Outlook — a caixa em uso não é tocada.
 - **Sem relatório por e-mail** (docs/13, decisão 12): o backend copia o e-mail processado para
   `Processos IA/<Organização>` na caixa (`MailboxOrganizer`, best-effort, exige
@@ -163,7 +165,9 @@ container.ts  composição manual de dependências (ver acima)
   `lookup`/`attach` consultam **exato por `normalized`** (maiúsculas, só `[A-Z0-9]`) antes do
   `contains`, e devolvem o `kind` casado em `matchedBy`. Sem resultado no índice e com o iLog
   ligado, o intake consulta o iLog **uma vez** e espelha na hora (retaguarda B do docs/15) — não
-  há ferramenta/endpoint separado para isso. `ilogProcessId`/`ilogCompanyId` são anuláveis **sem
+  há ferramenta/endpoint separado para isso. Depois de uma falha do iLog a consulta fica em pausa
+  por 5 min (`isLookupAvailable`, `ilogAvailable: false` no lookup): MySQL inalcançável custa o
+  timeout inteiro (10 s) por tentativa. `ilogProcessId`/`ilogCompanyId` são anuláveis **sem
   `@unique`** (índice filtrado à mão, mesmo padrão do `cnpj`; o `WHERE` do índice filtrado precisa
   de migration separada da coluna).
 - **`/intake/*` não passa pelo `uploadLimiter`** (30/10 min é para pessoas); usa o limite
